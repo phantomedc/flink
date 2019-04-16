@@ -766,43 +766,6 @@ object UserDefinedFunctionUtils {
     (candidate.isArray && expected.isArray &&
       (candidate.getComponentType == expected.getComponentType))
 
-  /**
-    * Creates a [[LogicalTableFunctionCall]] by an expression.
-    *
-    * @param tableEnv The table environment to lookup the function.
-    * @param callExpr an expression of a TableFunctionCall, such as "split(c)"
-    * @return A LogicalTableFunctionCall.
-    */
-  def createLogicalFunctionCall(
-      tableEnv: TableEnvironment,
-      callExpr: Expression)
-    : LogicalTableFunctionCall = {
-
-    var alias: Option[Seq[String]] = None
-
-    // unwrap an Expression until we get a TableFunctionCall
-    def unwrap(expr: Expression): TableFunctionCall = expr match {
-      case Alias(child, name, extraNames) =>
-        alias = Some(Seq(name) ++ extraNames)
-        unwrap(child)
-      case Call(name, args) =>
-        val function = tableEnv.functionCatalog.lookupFunction(name, args)
-        unwrap(function)
-      case c: TableFunctionCall => c
-      case _ =>
-        throw new TableException(
-          "A lateral join only accepts a string expression which defines a table function " +
-            "call that might be followed by some alias.")
-    }
-
-    val tableFunctionCall = unwrap(callExpr)
-
-    // aliases defined in an expression have highest precedence
-    alias.foreach(a => tableFunctionCall.setAliases(a))
-
-    tableFunctionCall.toLogicalTableFunctionCall(child = null)
-  }
-
   def getOperandTypeInfo(callBinding: SqlCallBinding): Seq[TypeInformation[_]] = {
     val operandTypes = for (i <- 0 until callBinding.getOperandCount)
       yield callBinding.getOperandType(i)

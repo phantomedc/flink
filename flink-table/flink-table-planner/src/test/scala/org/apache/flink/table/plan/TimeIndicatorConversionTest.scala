@@ -21,11 +21,11 @@ package org.apache.flink.table.plan
 import java.sql.Timestamp
 
 import org.apache.flink.api.scala._
+import org.apache.flink.table.api.Tumble
 import org.apache.flink.table.api.scala._
-import org.apache.flink.table.expressions.{TimeIntervalUnit, WindowReference}
+import org.apache.flink.table.expressions.TimeIntervalUnit
 import org.apache.flink.table.functions.{ScalarFunction, TableFunction}
 import org.apache.flink.table.plan.TimeIndicatorConversionTest.{ScalarFunc, TableFunc}
-import org.apache.flink.table.plan.logical.TumblingGroupWindow
 import org.apache.flink.table.utils.TableTestBase
 import org.apache.flink.table.utils.TableTestUtil._
 import org.junit.Test
@@ -188,12 +188,7 @@ class TimeIndicatorConversionTest extends TableTestBase {
         "DataStreamGroupWindowAggregate",
         streamTableNode(0),
         term("groupBy", "long"),
-        term(
-          "window",
-          TumblingGroupWindow(
-            'w,
-            'rowtime,
-            100.millis)),
+        term("window", "TumblingGroupWindow('w, 'rowtime, 100.millis)"),
         term("select", "long", "SUM(int) AS TMP_1", "end('w) AS TMP_0")
       ),
       term("select", "TMP_0 AS rowtime", "long", "TMP_1")
@@ -251,23 +246,13 @@ class TimeIndicatorConversionTest extends TableTestBase {
             "DataStreamGroupWindowAggregate",
             streamTableNode(0),
             term("groupBy", "long"),
-            term(
-              "window",
-              TumblingGroupWindow(
-                'w,
-                'rowtime,
-                100.millis)),
+            term("window", "TumblingGroupWindow('w, 'rowtime, 100.millis)"),
             term("select", "long", "SUM(int) AS TMP_1", "rowtime('w) AS TMP_0")
           ),
           term("select", "TMP_0 AS newrowtime", "long", "TMP_1 AS int")
         ),
         term("groupBy", "long"),
-        term(
-          "window",
-          TumblingGroupWindow(
-            'w2,
-            'newrowtime,
-            1000.millis)),
+        term("window", "TumblingGroupWindow('w2, 'newrowtime, 1000.millis)"),
         term("select", "long", "SUM(int) AS TMP_3", "end('w2) AS TMP_2")
       ),
       term("select", "TMP_2", "long", "TMP_3")
@@ -342,12 +327,7 @@ class TimeIndicatorConversionTest extends TableTestBase {
         "DataStreamGroupWindowAggregate",
         streamTableNode(0),
         term("groupBy", "long"),
-        term(
-          "window",
-          TumblingGroupWindow(
-            WindowReference("w$"),
-            'rowtime,
-            100.millis)),
+        term("window", "TumblingGroupWindow('w$, 'rowtime, 100.millis)"),
         term("select",
           "long",
           "SUM(int) AS EXPR$2",
@@ -380,12 +360,7 @@ class TimeIndicatorConversionTest extends TableTestBase {
           term("select", "long", "rowtime", "CAST(rowtime) AS rowtime0")
         ),
         term("groupBy", "long"),
-        term(
-          "window",
-          TumblingGroupWindow(
-            'w$,
-            'rowtime,
-            100.millis)),
+        term("window", "TumblingGroupWindow('w$, 'rowtime, 100.millis)"),
         term("select", "long", "MIN(rowtime0) AS EXPR$0")
       ),
       term("select", "EXPR$0", "long")
@@ -407,7 +382,7 @@ class TimeIndicatorConversionTest extends TableTestBase {
     val proctimeRates = proctimeRatesHistory.createTemporalTableFunction('proctime, 'currency)
 
     val result = proctimeOrders
-      .join(proctimeRates('o_proctime), "currency = o_currency")
+      .joinLateral(proctimeRates('o_proctime), 'currency === 'o_currency)
       .select("o_amount * rate, currency, proctime").as("converted_amount")
       .window(Tumble over 1.second on 'proctime as 'w)
       .groupBy('w, 'currency)
@@ -444,7 +419,7 @@ class TimeIndicatorConversionTest extends TableTestBase {
     val proctimeRates = proctimeRatesHistory.createTemporalTableFunction('proctime, 'currency)
 
     val result = proctimeOrders
-      .join(proctimeRates('o_proctime), "currency = o_currency")
+      .joinLateral(proctimeRates('o_proctime), 'currency === 'o_currency)
       .select("o_amount * rate, currency, o_proctime").as("converted_amount")
       .window(Tumble over 1.second on 'o_proctime as 'w)
       .groupBy('w, 'currency)
@@ -481,7 +456,7 @@ class TimeIndicatorConversionTest extends TableTestBase {
     val proctimeRates = proctimeRatesHistory.createTemporalTableFunction('proctime, 'currency)
 
     val result = proctimeOrders
-      .join(proctimeRates('o_proctime), "currency = o_currency")
+      .joinLateral(proctimeRates('o_proctime), 'currency === 'o_currency)
       .select("o_amount * rate, currency, o_proctime, o_rowtime").as("converted_amount")
       .window(Tumble over 1.second on 'o_rowtime as 'w)
       .groupBy('w, 'currency)

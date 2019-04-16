@@ -47,7 +47,7 @@ cd $TEST_INFRA_DIR
 TEST_INFRA_DIR=`pwd -P`
 cd $TEST_ROOT
 
-NODENAME=`hostname -f`
+NODENAME=${NODENAME:-`hostname -f`}
 
 # REST_PROTOCOL and CURL_SSL_ARGS can be modified in common_ssl.sh if SSL is activated
 # they should be used in curl command to query Flink REST API
@@ -212,7 +212,7 @@ function start_local_zk {
 function wait_dispatcher_running {
   # wait at most 10 seconds until the dispatcher is up
   local QUERY_URL="${REST_PROTOCOL}://${NODENAME}:8081/taskmanagers"
-  local TIMEOUT=10
+  local TIMEOUT=20
   for i in $(seq 1 ${TIMEOUT}); do
     # without the || true this would exit our script if the JobManager is not yet up
     QUERY_RESULT=$(curl ${CURL_SSL_ARGS} "$QUERY_URL" 2> /dev/null || true)

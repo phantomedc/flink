@@ -34,6 +34,7 @@ import org.apache.flink.configuration.ResourceManagerOptions;
 import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.configuration.SecurityOptions;
 import org.apache.flink.configuration.TaskManagerOptions;
+import org.apache.flink.core.plugin.PluginUtils;
 import org.apache.flink.runtime.akka.AkkaUtils;
 import org.apache.flink.runtime.clusterframework.BootstrapTools;
 import org.apache.flink.runtime.clusterframework.ContaineredTaskManagerParameters;
@@ -97,6 +98,7 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.apache.flink.configuration.ConfigConstants.ENV_FLINK_LIB_DIR;
@@ -661,12 +663,8 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 
 		// ------------------ Initialize the file systems -------------------------
 
-		try {
-			org.apache.flink.core.fs.FileSystem.initialize(configuration);
-		} catch (IOException e) {
-			throw new IOException("Error while setting the default " +
-					"filesystem scheme from configuration.", e);
-		}
+		//TODO provide plugin path.
+		org.apache.flink.core.fs.FileSystem.initialize(configuration, PluginUtils.createPluginManagerFromRootFolder(Optional.empty()));
 
 		// initialize file system
 		// Copy the application master jar to the filesystem
@@ -763,19 +761,14 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 			localResources,
 			envShipFileList);
 
-		List<String> userClassPaths;
-		if (userJarInclusion != YarnConfigOptions.UserJarInclusion.DISABLED) {
-			userClassPaths = uploadAndRegisterFiles(
-				userJarFiles,
-				fs,
-				homeDir,
-				appId,
-				paths,
-				localResources,
-				envShipFileList);
-		} else {
-			userClassPaths = Collections.emptyList();
-		}
+		final List<String> userClassPaths = uploadAndRegisterFiles(
+			userJarFiles,
+			fs,
+			homeDir,
+			appId,
+			paths,
+			localResources,
+			envShipFileList);
 
 		if (userJarInclusion == YarnConfigOptions.UserJarInclusion.ORDER) {
 			systemClassPaths.addAll(userClassPaths);
@@ -1602,15 +1595,16 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 	}
 
 	private static YarnConfigOptions.UserJarInclusion getUserJarInclusionMode(org.apache.flink.configuration.Configuration config) {
-		String configuredUserJarInclusion = config.getString(YarnConfigOptions.CLASSPATH_INCLUDE_USER_JAR);
-		try {
-			return YarnConfigOptions.UserJarInclusion.valueOf(configuredUserJarInclusion.toUpperCase());
-		} catch (IllegalArgumentException e) {
-			LOG.warn("Configuration parameter {} was configured with an invalid value {}. Falling back to default ({}).",
-				YarnConfigOptions.CLASSPATH_INCLUDE_USER_JAR.key(),
-				configuredUserJarInclusion,
-				YarnConfigOptions.CLASSPATH_INCLUDE_USER_JAR.defaultValue());
-			return YarnConfigOptions.UserJarInclusion.valueOf(YarnConfigOptions.CLASSPATH_INCLUDE_USER_JAR.defaultValue());
+		throwIfUserTriesToDisableUserJarInclusionInSystemClassPath(config);
+
+		return config.getEnum(YarnConfigOptions.UserJarInclusion.class, YarnConfigOptions.CLASSPATH_INCLUDE_USER_JAR);
+	}
+
+	private static void throwIfUserTriesToDisableUserJarInclusionInSystemClassPath(final Configuration config) {
+		final String userJarInclusion = config.getString(YarnConfigOptions.CLASSPATH_INCLUDE_USER_JAR);
+		if ("DISABLED".equalsIgnoreCase(userJarInclusion)) {
+			throw new IllegalArgumentException(String.format("Config option %s cannot be set to DISABLED anymore (see FLINK-11781)",
+				YarnConfigOptions.CLASSPATH_INCLUDE_USER_JAR.key()));
 		}
 	}
 

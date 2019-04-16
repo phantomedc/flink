@@ -156,9 +156,9 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 
 	private final BlobCacheService blobCacheService;
 
-	/** The path to metric query service on this Task Manager. */
+	/** The address to metric query service on this Task Manager. */
 	@Nullable
-	private final String metricQueryServicePath;
+	private final String metricQueryServiceAddress;
 
 	// --------- TaskManager services --------
 
@@ -172,6 +172,9 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 
 	/** The network component in the task manager. */
 	private final NetworkEnvironment networkEnvironment;
+
+	/** The kvState registration service in the task manager. */
+	private final KvStateService kvStateService;
 
 	// --------- job manager connections -----------
 
@@ -216,7 +219,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 			TaskManagerServices taskExecutorServices,
 			HeartbeatServices heartbeatServices,
 			TaskManagerMetricGroup taskManagerMetricGroup,
-			@Nullable String metricQueryServicePath,
+			@Nullable String metricQueryServiceAddress,
 			BlobCacheService blobCacheService,
 			FatalErrorHandler fatalErrorHandler) {
 
@@ -230,7 +233,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		this.fatalErrorHandler = checkNotNull(fatalErrorHandler);
 		this.taskManagerMetricGroup = checkNotNull(taskManagerMetricGroup);
 		this.blobCacheService = checkNotNull(blobCacheService);
-		this.metricQueryServicePath = metricQueryServicePath;
+		this.metricQueryServiceAddress = metricQueryServiceAddress;
 
 		this.taskSlotTable = taskExecutorServices.getTaskSlotTable();
 		this.jobManagerTable = taskExecutorServices.getJobManagerTable();
@@ -238,6 +241,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		this.taskManagerLocation = taskExecutorServices.getTaskManagerLocation();
 		this.localStateStoresManager = taskExecutorServices.getTaskManagerStateStore();
 		this.networkEnvironment = taskExecutorServices.getNetworkEnvironment();
+		this.kvStateService = taskExecutorServices.getKvStateService();
 		this.resourceManagerLeaderRetriever = haServices.getResourceManagerLeaderRetriever();
 
 		this.jobManagerConnections = new HashMap<>(4);
@@ -264,6 +268,12 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		this.currentRegistrationTimeoutId = null;
 
 		this.stackTraceSampleService = new StackTraceSampleService(rpcService.getScheduledExecutor());
+	}
+
+	@Override
+	public CompletableFuture<Boolean> canBeReleased() {
+		return CompletableFuture.completedFuture(
+			taskExecutorServices.getNetworkEnvironment().getResultPartitionManager().areAllPartitionsReleased());
 	}
 
 	// ------------------------------------------------------------------------
@@ -526,7 +536,9 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 				taskExecutorServices.getMemoryManager(),
 				taskExecutorServices.getIOManager(),
 				taskExecutorServices.getNetworkEnvironment(),
+				taskExecutorServices.getKvStateService(),
 				taskExecutorServices.getBroadcastVariableManager(),
+				taskExecutorServices.getTaskEventDispatcher(),
 				taskStateManager,
 				taskManagerActions,
 				inputSplitProvider,
@@ -852,7 +864,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 
 	@Override
 	public CompletableFuture<SerializableOptional<String>> requestMetricQueryServiceAddress(Time timeout) {
-		return CompletableFuture.completedFuture(SerializableOptional.ofNullable(metricQueryServicePath));
+		return CompletableFuture.completedFuture(SerializableOptional.ofNullable(metricQueryServiceAddress));
 	}
 
 	// ----------------------------------------------------------------------
@@ -1261,13 +1273,13 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 	private void disassociateFromJobManager(JobManagerConnection jobManagerConnection, Exception cause) throws IOException {
 		checkNotNull(jobManagerConnection);
 
-		final KvStateRegistry kvStateRegistry = networkEnvironment.getKvStateRegistry();
+		final KvStateRegistry kvStateRegistry = kvStateService.getKvStateRegistry();
 
 		if (kvStateRegistry != null) {
 			kvStateRegistry.unregisterListener(jobManagerConnection.getJobID());
 		}
 
-		final KvStateClientProxy kvStateClientProxy = networkEnvironment.getKvStateProxy();
+		final KvStateClientProxy kvStateClientProxy = kvStateService.getKvStateClientProxy();
 
 		if (kvStateClientProxy != null) {
 			kvStateClientProxy.updateKvStateLocationOracle(jobManagerConnection.getJobID(), null);
@@ -1279,8 +1291,8 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 	}
 
 	private void registerQueryableState(JobID jobId, JobMasterGateway jobMasterGateway) {
-		final KvStateServer kvStateServer = networkEnvironment.getKvStateServer();
-		final KvStateRegistry kvStateRegistry = networkEnvironment.getKvStateRegistry();
+		final KvStateServer kvStateServer = kvStateService.getKvStateServer();
+		final KvStateRegistry kvStateRegistry = kvStateService.getKvStateRegistry();
 
 		if (kvStateServer != null && kvStateRegistry != null) {
 			kvStateRegistry.registerListener(
@@ -1290,7 +1302,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 					kvStateServer.getServerAddress()));
 		}
 
-		final KvStateClientProxy kvStateProxy = networkEnvironment.getKvStateProxy();
+		final KvStateClientProxy kvStateProxy = kvStateService.getKvStateClientProxy();
 
 		if (kvStateProxy != null) {
 			kvStateProxy.updateKvStateLocationOracle(jobId, jobMasterGateway);

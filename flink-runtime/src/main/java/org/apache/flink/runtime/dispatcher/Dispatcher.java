@@ -126,7 +126,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 	private final HistoryServerArchivist historyServerArchivist;
 
 	@Nullable
-	private final String metricQueryServicePath;
+	private final String metricServiceQueryAddress;
 
 	private final Map<JobID, CompletableFuture<Void>> jobManagerTerminationFutures;
 
@@ -142,7 +142,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 			BlobServer blobServer,
 			HeartbeatServices heartbeatServices,
 			JobManagerMetricGroup jobManagerMetricGroup,
-			@Nullable String metricServiceQueryPath,
+			@Nullable String metricServiceQueryAddress,
 			ArchivedExecutionGraphStore archivedExecutionGraphStore,
 			JobManagerRunnerFactory jobManagerRunnerFactory,
 			FatalErrorHandler fatalErrorHandler,
@@ -157,7 +157,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 		this.fatalErrorHandler = Preconditions.checkNotNull(fatalErrorHandler);
 		this.submittedJobGraphStore = Preconditions.checkNotNull(submittedJobGraphStore);
 		this.jobManagerMetricGroup = Preconditions.checkNotNull(jobManagerMetricGroup);
-		this.metricQueryServicePath = metricServiceQueryPath;
+		this.metricServiceQueryAddress = metricServiceQueryAddress;
 
 		this.jobManagerSharedServices = JobManagerSharedServices.fromConfiguration(
 			configuration,
@@ -260,40 +260,57 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 
 	@Override
 	public CompletableFuture<Acknowledge> submitJob(JobGraph jobGraph, Time timeout) {
-		return internalSubmitJob(jobGraph).whenCompleteAsync((acknowledge, throwable) -> {
-			if (throwable != null) {
-				cleanUpJobData(jobGraph.getJobID(), true);
+		log.info("Received JobGraph submission {} ({}).", jobGraph.getJobID(), jobGraph.getName());
+
+		try {
+			if (isDuplicateJob(jobGraph.getJobID())) {
+				return FutureUtils.completedExceptionally(
+					new JobSubmissionException(jobGraph.getJobID(), "Job has already been submitted."));
+			} else {
+				return internalSubmitJob(jobGraph);
 			}
-		}, getRpcService().getExecutor());
+		} catch (FlinkException e) {
+			return FutureUtils.completedExceptionally(e);
+		}
 	}
 
-	private CompletableFuture<Acknowledge> internalSubmitJob(JobGraph jobGraph) {
-		final JobID jobId = jobGraph.getJobID();
-
-		log.info("Submitting job {} ({}).", jobId, jobGraph.getName());
+	/**
+	 * Checks whether the given job has already been submitted or executed.
+	 *
+	 * @param jobId identifying the submitted job
+	 * @return true if the job has already been submitted (is running) or has been executed
+	 * @throws FlinkException if the job scheduling status cannot be retrieved
+	 */
+	private boolean isDuplicateJob(JobID jobId) throws FlinkException {
 		final RunningJobsRegistry.JobSchedulingStatus jobSchedulingStatus;
 
 		try {
 			jobSchedulingStatus = runningJobsRegistry.getJobSchedulingStatus(jobId);
 		} catch (IOException e) {
-			return FutureUtils.completedExceptionally(new FlinkException(String.format("Failed to retrieve job scheduling status for job %s.", jobId), e));
+			throw new FlinkException(String.format("Failed to retrieve job scheduling status for job %s.", jobId), e);
 		}
 
-		if (jobSchedulingStatus == RunningJobsRegistry.JobSchedulingStatus.DONE || jobManagerRunnerFutures.containsKey(jobId)) {
-			return FutureUtils.completedExceptionally(
-				new JobSubmissionException(jobId, String.format("Job has already been submitted and is in state %s.", jobSchedulingStatus)));
-		} else {
-			final CompletableFuture<Acknowledge> persistAndRunFuture = waitForTerminatingJobManager(jobId, jobGraph, this::persistAndRunJob)
-				.thenApply(ignored -> Acknowledge.get());
+		return jobSchedulingStatus == RunningJobsRegistry.JobSchedulingStatus.DONE || jobManagerRunnerFutures.containsKey(jobId);
+	}
 
-			return persistAndRunFuture.exceptionally(
-				(Throwable throwable) -> {
-					final Throwable strippedThrowable = ExceptionUtils.stripCompletionException(throwable);
-					log.error("Failed to submit job {}.", jobId, strippedThrowable);
-					throw new CompletionException(
-						new JobSubmissionException(jobId, "Failed to submit job.", strippedThrowable));
-				});
-		}
+	private CompletableFuture<Acknowledge> internalSubmitJob(JobGraph jobGraph) {
+		log.info("Submitting job {} ({}).", jobGraph.getJobID(), jobGraph.getName());
+
+		final CompletableFuture<Acknowledge> persistAndRunFuture = waitForTerminatingJobManager(jobGraph.getJobID(), jobGraph, this::persistAndRunJob)
+			.thenApply(ignored -> Acknowledge.get());
+
+		return persistAndRunFuture.handleAsync((acknowledge, throwable) -> {
+			if (throwable != null) {
+				cleanUpJobData(jobGraph.getJobID(), true);
+
+				final Throwable strippedThrowable = ExceptionUtils.stripCompletionException(throwable);
+				log.error("Failed to submit job {}.", jobGraph.getJobID(), strippedThrowable);
+				throw new CompletionException(
+					new JobSubmissionException(jobGraph.getJobID(), "Failed to submit job.", strippedThrowable));
+			} else {
+				return acknowledge;
+			}
+		}, getRpcService().getExecutor());
 	}
 
 	private CompletableFuture<Void> persistAndRunJob(JobGraph jobGraph) throws Exception {
@@ -533,17 +550,17 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 	}
 
 	@Override
-	public CompletableFuture<Collection<String>> requestMetricQueryServicePaths(Time timeout) {
-		if (metricQueryServicePath != null) {
-			return CompletableFuture.completedFuture(Collections.singleton(metricQueryServicePath));
+	public CompletableFuture<Collection<String>> requestMetricQueryServiceAddresses(Time timeout) {
+		if (metricServiceQueryAddress != null) {
+			return CompletableFuture.completedFuture(Collections.singleton(metricServiceQueryAddress));
 		} else {
 			return CompletableFuture.completedFuture(Collections.emptyList());
 		}
 	}
 
 	@Override
-	public CompletableFuture<Collection<Tuple2<ResourceID, String>>> requestTaskManagerMetricQueryServicePaths(Time timeout) {
-		return runResourceManagerCommand(resourceManagerGateway -> resourceManagerGateway.requestTaskManagerMetricQueryServicePaths(timeout));
+	public CompletableFuture<Collection<Tuple2<ResourceID, String>>> requestTaskManagerMetricQueryServiceAddresses(Time timeout) {
+		return runResourceManagerCommand(resourceManagerGateway -> resourceManagerGateway.requestTaskManagerMetricQueryServiceAddresses(timeout));
 	}
 
 	@Override

@@ -18,12 +18,14 @@
 package org.apache.flink.table.dataformat;
 
 import org.apache.flink.core.memory.MemorySegmentFactory;
+import org.apache.flink.table.type.InternalType;
+import org.apache.flink.table.type.InternalTypes;
 import org.apache.flink.table.util.SegmentsUtil;
 
 /**
  * Writer for binary array. See {@link BinaryArray}.
  */
-public class BinaryArrayWriter extends AbstractBinaryWriter {
+public final class BinaryArrayWriter extends AbstractBinaryWriter {
 
 	private final int nullBitsSizeInBytes;
 	private final BinaryArray array;
@@ -54,7 +56,8 @@ public class BinaryArrayWriter extends AbstractBinaryWriter {
 		this.segment.putInt(0, numElements);
 	}
 
-	private void setNullBit(int ordinal) {
+	@Override
+	public void setNullBit(int ordinal) {
 		SegmentsUtil.bitSet(segment, 4, ordinal);
 	}
 
@@ -103,6 +106,34 @@ public class BinaryArrayWriter extends AbstractBinaryWriter {
 	@Override
 	public void setNullAt(int ordinal) {
 		setNullLong(ordinal);
+	}
+
+	public void setNullAt(int pos, InternalType type) {
+		if (type.equals(InternalTypes.BOOLEAN)) {
+			setNullBoolean(pos);
+		} else if (type.equals(InternalTypes.BYTE)) {
+			setNullByte(pos);
+		} else if (type.equals(InternalTypes.SHORT)) {
+			setNullShort(pos);
+		} else if (type.equals(InternalTypes.INT)) {
+			setNullInt(pos);
+		} else if (type.equals(InternalTypes.LONG)) {
+			setNullLong(pos);
+		} else if (type.equals(InternalTypes.FLOAT)) {
+			setNullFloat(pos);
+		} else if (type.equals(InternalTypes.DOUBLE)) {
+			setNullDouble(pos);
+		} else if (type.equals(InternalTypes.DATE)) {
+			setNullInt(pos);
+		} else if (type.equals(InternalTypes.TIME)) {
+			setNullInt(pos);
+		} else if (type.equals(InternalTypes.TIMESTAMP)) {
+			setNullLong(pos);
+		} else if (type.equals(InternalTypes.CHAR)) {
+			setNullShort(pos);
+		} else {
+			setNullAt(pos);
+		}
 	}
 
 	private int getElementOffset(int pos, int elementSize) {

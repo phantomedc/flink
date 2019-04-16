@@ -28,8 +28,10 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.TypeSerializerSchemaCompatibility;
 import org.apache.flink.api.common.typeutils.TypeSerializerSnapshot;
 import org.apache.flink.api.common.typeutils.base.IntSerializer;
+import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
+import org.apache.flink.metrics.groups.UnregisteredMetricsGroup;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
 import org.apache.flink.runtime.checkpoint.StateObjectCollection;
 import org.apache.flink.runtime.execution.Environment;
@@ -46,6 +48,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -154,8 +157,6 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 				CustomVoidNamespaceSerializer.INSTANCE,
 				newAccessDescriptorAfterRestore);
 
-			snapshot.discardState();
-
 			// make sure that reading and writing each key state works with the new serializer
 			backend.setCurrentKey(1);
 			Assert.assertEquals(new TestType("foo", 1456), valueState.value());
@@ -168,6 +169,12 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 			backend.setCurrentKey(3);
 			Assert.assertEquals(new TestType("hello", 189), valueState.value());
 			valueState.update(new TestType("newValue3", 444));
+
+			// do another snapshot to verify the snapshot logic after migration
+			snapshot = runSnapshot(
+				backend.snapshot(2L, 3L, streamFactory, CheckpointOptions.forCheckpointWithDefaultLocation()),
+				sharedStateRegistry);
+			snapshot.discardState();
 		} finally {
 			backend.dispose();
 		}
@@ -263,8 +270,6 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 				CustomVoidNamespaceSerializer.INSTANCE,
 				newAccessDescriptorAfterRestore);
 
-			snapshot.discardState();
-
 			// make sure that reading and writing each key state works with the new serializer
 			backend.setCurrentKey(1);
 			Iterator<TestType> iterable1 = listState.get().iterator();
@@ -286,6 +291,13 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 			Assert.assertEquals(new TestType("key-3", 2), iterable3.next());
 			Assert.assertFalse(iterable3.hasNext());
 			listState.add(new TestType("new-key-3", 777));
+
+			// do another snapshot to verify the snapshot logic after migration
+			snapshot = runSnapshot(
+				backend.snapshot(2L, 3L, streamFactory, CheckpointOptions.forCheckpointWithDefaultLocation()),
+				sharedStateRegistry);
+			snapshot.discardState();
+
 		} finally {
 			backend.dispose();
 		}
@@ -402,6 +414,10 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 			backend.setCurrentKey(new TestType("bar", 456));
 			Assert.assertEquals(5, valueState.value().intValue());
 
+			// do another snapshot to verify the snapshot logic after migration
+			snapshot = runSnapshot(
+				backend.snapshot(2L, 3L, streamFactory, CheckpointOptions.forCheckpointWithDefaultLocation()),
+				sharedStateRegistry);
 			snapshot.discardState();
 		} finally {
 			backend.dispose();
@@ -490,6 +506,10 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 			backend.setCurrentKey(5);
 			Assert.assertEquals(50, valueState.value().intValue());
 
+			// do another snapshot to verify the snapshot logic after migration
+			snapshot = runSnapshot(
+				backend.snapshot(2L, 3L, streamFactory, CheckpointOptions.forCheckpointWithDefaultLocation()),
+				sharedStateRegistry);
 			snapshot.discardState();
 		} finally {
 			backend.dispose();
@@ -999,8 +1019,11 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 			keySerializer,
 			numberOfKeyGroups,
 			keyGroupRange,
-			env.getTaskKvStateRegistry());
-		backend.restore(Collections.emptyList());
+			env.getTaskKvStateRegistry(),
+			TtlTimeProvider.DEFAULT,
+			new UnregisteredMetricsGroup(),
+			Collections.emptyList(),
+			new CloseableRegistry());
 		return backend;
 	}
 
@@ -1033,10 +1056,11 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 			keySerializer,
 			numberOfKeyGroups,
 			keyGroupRange,
-			env.getTaskKvStateRegistry()
-			, TtlTimeProvider.DEFAULT,
-			state);
-		backend.restore(new StateObjectCollection<>(state));
+			env.getTaskKvStateRegistry(),
+			TtlTimeProvider.DEFAULT,
+			new UnregisteredMetricsGroup(),
+			state,
+			new CloseableRegistry());
 		return backend;
 	}
 
@@ -1061,12 +1085,17 @@ public abstract class StateBackendMigrationTestBase<B extends AbstractStateBacke
 	// -------------------------------------------------------------------------------
 
 	private OperatorStateBackend createOperatorStateBackend() throws Exception {
-		return getStateBackend().createOperatorStateBackend(new DummyEnvironment(), "test_op");
+		return getStateBackend().createOperatorStateBackend(
+			new DummyEnvironment(), "test_op", Collections.emptyList(), new CloseableRegistry());
+	}
+
+	private OperatorStateBackend createOperatorStateBackend(Collection<OperatorStateHandle> state) throws Exception {
+		return getStateBackend().createOperatorStateBackend(
+			new DummyEnvironment(), "test_op", state, new CloseableRegistry());
 	}
 
 	private OperatorStateBackend restoreOperatorStateBackend(OperatorStateHandle state) throws Exception {
-		OperatorStateBackend operatorStateBackend = createOperatorStateBackend();
-		operatorStateBackend.restore(StateObjectCollection.singleton(state));
+		OperatorStateBackend operatorStateBackend = createOperatorStateBackend(StateObjectCollection.singleton(state));
 		return operatorStateBackend;
 	}
 

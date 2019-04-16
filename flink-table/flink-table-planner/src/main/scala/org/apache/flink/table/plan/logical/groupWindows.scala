@@ -18,25 +18,40 @@
 
 package org.apache.flink.table.plan.logical
 
+import java.util.Optional
+import java.util.{List => JList}
+
 import org.apache.flink.table.api.{BatchTableEnvironment, StreamTableEnvironment, TableEnvironment}
-import org.apache.flink.table.expressions.ExpressionUtils.{isRowCountLiteral, isRowtimeAttribute, isTimeAttribute, isTimeIntervalLiteral}
+import org.apache.flink.table.expressions.PlannerExpressionUtils.{isRowCountLiteral, isRowtimeAttribute, isTimeAttribute, isTimeIntervalLiteral}
 import org.apache.flink.table.expressions._
-import org.apache.flink.table.typeutils.TypeCheckUtils.{isTimePoint, isLong}
+import org.apache.flink.table.typeutils.TypeCheckUtils.{isLong, isTimePoint}
 import org.apache.flink.table.validate.{ValidationFailure, ValidationResult, ValidationSuccess}
+
+// ------------------------------------------------------------------------------------------------
+// Over windows
+// ------------------------------------------------------------------------------------------------
+
+case class LogicalOverWindow(
+    alias: Expression,
+    partitionBy: JList[Expression],
+    orderBy: Expression,
+    preceding: Expression,
+    following: Optional[Expression])
 
 // ------------------------------------------------------------------------------------------------
 // Tumbling group windows
 // ------------------------------------------------------------------------------------------------
 
 case class TumblingGroupWindow(
-    alias: Expression,
-    timeField: Expression,
-    size: Expression)
+    alias: PlannerExpression,
+    timeField: PlannerExpression,
+    size: PlannerExpression)
   extends LogicalWindow(
     alias,
     timeField) {
 
-  override def resolveExpressions(resolve: (Expression) => Expression): LogicalWindow =
+  override def resolveExpressions(
+      resolve: (PlannerExpression) => PlannerExpression): LogicalWindow =
     TumblingGroupWindow(
       resolve(alias),
       resolve(timeField),
@@ -81,15 +96,16 @@ case class TumblingGroupWindow(
 // ------------------------------------------------------------------------------------------------
 
 case class SlidingGroupWindow(
-    alias: Expression,
-    timeField: Expression,
-    size: Expression,
-    slide: Expression)
+    alias: PlannerExpression,
+    timeField: PlannerExpression,
+    size: PlannerExpression,
+    slide: PlannerExpression)
   extends LogicalWindow(
     alias,
     timeField) {
 
-  override def resolveExpressions(resolve: (Expression) => Expression): LogicalWindow =
+  override def resolveExpressions(
+      resolve: (PlannerExpression) => PlannerExpression): LogicalWindow =
     SlidingGroupWindow(
       resolve(alias),
       resolve(timeField),
@@ -145,14 +161,15 @@ case class SlidingGroupWindow(
 // ------------------------------------------------------------------------------------------------
 
 case class SessionGroupWindow(
-    alias: Expression,
-    timeField: Expression,
-    gap: Expression)
+    alias: PlannerExpression,
+    timeField: PlannerExpression,
+    gap: PlannerExpression)
   extends LogicalWindow(
     alias,
     timeField) {
 
-  override def resolveExpressions(resolve: (Expression) => Expression): LogicalWindow =
+  override def resolveExpressions(
+      resolve: (PlannerExpression) => PlannerExpression): LogicalWindow =
     SessionGroupWindow(
       resolve(alias),
       resolve(timeField),

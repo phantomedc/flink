@@ -355,7 +355,7 @@ abstract class BatchTableEnvironment(
     * @param extended Flag to include detailed optimizer estimates.
     */
   private[flink] def explain(table: Table, extended: Boolean): String = {
-    val ast = table.getRelNode
+    val ast = table.asInstanceOf[TableImpl].getRelNode
     val optimizedPlan = optimize(ast)
     val dataSet = translate[Row](optimizedPlan, ast.getRowType, queryConfig) (
       new GenericTypeInfo (classOf[Row]))
@@ -416,12 +416,13 @@ abstract class BatchTableEnvironment(
       name: String, dataSet: DataSet[T], fields: Array[Expression]): Unit = {
 
     val inputType = dataSet.getType
+    val bridgedFields = fields.map(expressionBridge.bridge).toArray[Expression]
 
     val (fieldNames, fieldIndexes) = getFieldInfo[T](
       inputType,
-      fields)
+      bridgedFields)
 
-    if (fields.exists(_.isInstanceOf[TimeAttribute])) {
+    if (bridgedFields.exists(_.isInstanceOf[TimeAttribute])) {
       throw new ValidationException(
         ".rowtime and .proctime time indicators are not allowed in a batch environment.")
     }
@@ -470,7 +471,7 @@ abstract class BatchTableEnvironment(
   protected def translate[A](
       table: Table,
       queryConfig: BatchQueryConfig)(implicit tpe: TypeInformation[A]): DataSet[A] = {
-    val relNode = table.getRelNode
+    val relNode = table.asInstanceOf[TableImpl].getRelNode
     val dataSetPlan = optimize(relNode)
     translate(dataSetPlan, relNode.getRowType, queryConfig)
   }

@@ -21,11 +21,10 @@ package org.apache.flink.table.api.batch.sql
 import java.sql.Timestamp
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.runtime.utils.JavaUserDefinedAggFunctions.WeightedAvgWithMerge
 import org.apache.flink.table.api.scala._
-import org.apache.flink.table.plan.logical._
-import org.apache.flink.table.utils.TableTestUtil._
+import org.apache.flink.table.runtime.utils.JavaUserDefinedAggFunctions.WeightedAvgWithMerge
 import org.apache.flink.table.utils.TableTestBase
+import org.apache.flink.table.utils.TableTestUtil._
 import org.junit.Test
 
 class GroupWindowTest extends TableTestBase {
@@ -46,7 +45,7 @@ class GroupWindowTest extends TableTestBase {
           batchTableNode(0),
           term("select", "ts, a, b")
         ),
-        term("window", TumblingGroupWindow('w$, 'ts, 7200000.millis)),
+        term("window", "TumblingGroupWindow('w$, 'ts, 7200000.millis)"),
         term("select", "SUM(a) AS sumA, COUNT(b) AS cntB")
       )
 
@@ -76,7 +75,7 @@ class GroupWindowTest extends TableTestBase {
           "DataSetWindowAggregate",
           batchTableNode(0),
           term("groupBy", "c"),
-          term("window", TumblingGroupWindow('w$, 'ts, 240000.millis)),
+          term("window", "TumblingGroupWindow('w$, 'ts, 240000.millis)"),
           term("select", "c, SUM(a) AS sumA, MIN(b) AS minB, " +
             "start('w$) AS w$start, end('w$) AS w$end, rowtime('w$) AS w$rowtime")
         ),
@@ -107,7 +106,7 @@ class GroupWindowTest extends TableTestBase {
           batchTableNode(0),
           term("select", "ts, b, a")
         ),
-        term("window", TumblingGroupWindow('w$, 'ts, 240000.millis)),
+        term("window", "TumblingGroupWindow('w$, 'ts, 240000.millis)"),
         term("select", "weightedAvg(b, a) AS wAvg")
       )
 
@@ -132,8 +131,7 @@ class GroupWindowTest extends TableTestBase {
           batchTableNode(0),
           term("select", "ts, a, b")
         ),
-        term("window",
-          SlidingGroupWindow('w$, 'ts, 5400000.millis, 900000.millis)),
+        term("window", "SlidingGroupWindow('w$, 'ts, 5400000.millis, 900000.millis)"),
         term("select", "SUM(a) AS sumA, COUNT(b) AS cntB")
       )
 
@@ -163,8 +161,7 @@ class GroupWindowTest extends TableTestBase {
           "DataSetWindowAggregate",
           batchTableNode(0),
           term("groupBy", "c, d"),
-          term("window",
-            SlidingGroupWindow('w$, 'ts, 10800000.millis, 3600000.millis)),
+          term("window", "SlidingGroupWindow('w$, 'ts, 10800000.millis, 3600000.millis)"),
           term("select", "c, d, SUM(a) AS sumA, AVG(b) AS avgB, " +
             "start('w$) AS w$start, end('w$) AS w$end, rowtime('w$) AS w$rowtime")
         ),
@@ -191,7 +188,7 @@ class GroupWindowTest extends TableTestBase {
           batchTableNode(0),
           term("select", "ts")
         ),
-        term("window", SessionGroupWindow('w$, 'ts, 1800000.millis)),
+        term("window", "SessionGroupWindow('w$, 'ts, 1800000.millis)"),
         term("select", "COUNT(*) AS cnt")
       )
 
@@ -221,7 +218,7 @@ class GroupWindowTest extends TableTestBase {
           "DataSetWindowAggregate",
           batchTableNode(0),
           term("groupBy", "c, d"),
-          term("window", SessionGroupWindow('w$, 'ts, 43200000.millis)),
+          term("window", "SessionGroupWindow('w$, 'ts, 43200000.millis)"),
           term("select", "c, d, SUM(a) AS sumA, MIN(b) AS minB, " +
             "start('w$) AS w$start, end('w$) AS w$end, rowtime('w$) AS w$rowtime")
         ),
@@ -254,7 +251,7 @@ class GroupWindowTest extends TableTestBase {
             term("select", "ts, c")
           ),
           term("groupBy", "c"),
-          term("window", TumblingGroupWindow('w$, 'ts, 240000.millis)),
+          term("window", "TumblingGroupWindow('w$, 'ts, 240000.millis)"),
           term("select", "c, start('w$) AS w$start, end('w$) AS w$end, rowtime('w$) AS w$rowtime")
         ),
         term("select", "CAST(w$end) AS EXPR$0")
@@ -288,7 +285,7 @@ class GroupWindowTest extends TableTestBase {
             batchTableNode(0),
             term("select", "ts, a")
           ),
-          term("window", SlidingGroupWindow('w$, 'ts, 60000.millis, 900000.millis)),
+          term("window", "SlidingGroupWindow('w$, 'ts, 60000.millis, 900000.millis)"),
           term("select",
             "COUNT(*) AS EXPR$0",
             "SUM(a) AS $f1",
@@ -326,26 +323,22 @@ class GroupWindowTest extends TableTestBase {
           unaryNode(
             "DataSetCalc",
             batchTableNode(0),
-            term("select", "rowtime", "c",
-              "*(c, c) AS $f2", "*(c, c) AS $f3", "*(c, c) AS $f4", "*(c, c) AS $f5")
+            term("select", "rowtime", "c", "*(c, c) AS $f2")
           ),
-          term("window", TumblingGroupWindow('w$, 'rowtime, 900000.millis)),
+          term("window", "TumblingGroupWindow('w$, 'rowtime, 900000.millis)"),
           term("select",
             "SUM($f2) AS $f0",
             "SUM(c) AS $f1",
             "COUNT(c) AS $f2",
-            "SUM($f3) AS $f3",
-            "SUM($f4) AS $f4",
-            "SUM($f5) AS $f5",
             "start('w$) AS w$start",
             "end('w$) AS w$end",
             "rowtime('w$) AS w$rowtime")
         ),
         term("select",
-          "CAST(/(-($f0, /(*($f1, $f1), $f2)), $f2)) AS EXPR$0",
-          "CAST(/(-($f3, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1)))) AS EXPR$1",
-          "CAST(POWER(/(-($f4, /(*($f1, $f1), $f2)), $f2), 0.5)) AS EXPR$2",
-          "CAST(POWER(/(-($f5, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1))), 0.5)) " +
+          "/(-($f0, /(*($f1, $f1), $f2)), $f2) AS EXPR$0",
+          "/(-($f0, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1))) AS EXPR$1",
+          "CAST(POWER(/(-($f0, /(*($f1, $f1), $f2)), $f2), 0.5)) AS EXPR$2",
+          "CAST(POWER(/(-($f0, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1))), 0.5)) " +
             "AS EXPR$3",
           "CAST(w$start) AS EXPR$4",
           "CAST(w$end) AS EXPR$5")

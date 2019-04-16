@@ -76,7 +76,7 @@ class FlinkPlannerImpl(
       createCatalogReader(true), // ignore cases for lenient completion
       typeFactory,
       config.getParserConfig.conformance())
-    val advisor = new SqlAdvisor(advisorValidator)
+    val advisor = new SqlAdvisor(advisorValidator, config.getParserConfig)
     val replaced = Array[String](null)
     val hints = advisor.getCompletionHints(sql, cursor, replaced)
       .map(item => item.toIdentifier.toString)
@@ -91,7 +91,7 @@ class FlinkPlannerImpl(
       sqlNode
     } catch {
       case e: CSqlParseException =>
-        throw SqlParserException(s"SQL parse failed. ${e.getMessage}", e)
+        throw new SqlParserException(s"SQL parse failed. ${e.getMessage}", e)
     }
   }
 
@@ -154,7 +154,7 @@ class FlinkPlannerImpl(
       }
       catch {
         case e: CSqlParseException =>
-          throw SqlParserException(s"SQL parse failed. ${e.getMessage}", e)
+          throw new SqlParserException(s"SQL parse failed. ${e.getMessage}", e)
       }
       val catalogReader: CalciteCatalogReader = createCatalogReader(false)
         .withSchemaPath(schemaPath)

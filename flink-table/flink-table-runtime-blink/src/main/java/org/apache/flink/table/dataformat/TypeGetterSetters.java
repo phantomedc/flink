@@ -17,6 +17,16 @@
 
 package org.apache.flink.table.dataformat;
 
+import org.apache.flink.table.type.ArrayType;
+import org.apache.flink.table.type.DateType;
+import org.apache.flink.table.type.DecimalType;
+import org.apache.flink.table.type.GenericType;
+import org.apache.flink.table.type.InternalType;
+import org.apache.flink.table.type.InternalTypes;
+import org.apache.flink.table.type.MapType;
+import org.apache.flink.table.type.RowType;
+import org.apache.flink.table.type.TimestampType;
+
 /**
  * Provide type specialized getters and setters to reduce if/else and eliminate box and unbox.
  *
@@ -87,6 +97,21 @@ public interface TypeGetterSetters {
 	BinaryString getString(int ordinal);
 
 	/**
+	 * Get decimal value, internal format is Decimal.
+	 */
+	Decimal getDecimal(int ordinal, int precision, int scale);
+
+	/**
+	 * Get generic value, internal format is BinaryGeneric.
+	 */
+	<T> BinaryGeneric<T> getGeneric(int ordinal);
+
+	/**
+	 * Get binary value, internal format is byte[].
+	 */
+	byte[] getBinary(int ordinal);
+
+	/**
 	 * Get array value, internal format is BinaryArray.
 	 */
 	BinaryArray getArray(int ordinal);
@@ -95,6 +120,11 @@ public interface TypeGetterSetters {
 	 * Get map value, internal format is BinaryMap.
 	 */
 	BinaryMap getMap(int ordinal);
+
+	/**
+	 * Get row value, internal format is BaseRow.
+	 */
+	BaseRow getRow(int ordinal, int numFields);
 
 	/**
 	 * Set boolean value.
@@ -135,4 +165,57 @@ public interface TypeGetterSetters {
 	 * Set char value.
 	 */
 	void setChar(int ordinal, char value);
+
+	/**
+	 * Set the decimal column value.
+	 *
+	 * <p>Note:
+	 * Precision is compact: can call setNullAt when decimal is null.
+	 * Precision is not compact: can not call setNullAt when decimal is null, must call
+	 * setDecimal(i, null, precision) because we need update var-length-part.
+	 */
+	void setDecimal(int i, Decimal value, int precision);
+
+	static Object get(TypeGetterSetters row, int ordinal, InternalType type) {
+		if (type.equals(InternalTypes.BOOLEAN)) {
+			return row.getBoolean(ordinal);
+		} else if (type.equals(InternalTypes.BYTE)) {
+			return row.getByte(ordinal);
+		} else if (type.equals(InternalTypes.SHORT)) {
+			return row.getShort(ordinal);
+		} else if (type.equals(InternalTypes.INT)) {
+			return row.getInt(ordinal);
+		} else if (type.equals(InternalTypes.LONG)) {
+			return row.getLong(ordinal);
+		} else if (type.equals(InternalTypes.FLOAT)) {
+			return row.getFloat(ordinal);
+		} else if (type.equals(InternalTypes.DOUBLE)) {
+			return row.getDouble(ordinal);
+		} else if (type.equals(InternalTypes.STRING)) {
+			return row.getString(ordinal);
+		} else if (type.equals(InternalTypes.CHAR)) {
+			return row.getChar(ordinal);
+		} else if (type instanceof DateType) {
+			return row.getInt(ordinal);
+		} else if (type.equals(InternalTypes.TIME)) {
+			return row.getInt(ordinal);
+		} else if (type instanceof TimestampType) {
+			return row.getLong(ordinal);
+		} else if (type instanceof DecimalType) {
+			DecimalType decimalType = (DecimalType) type;
+			return row.getDecimal(ordinal, decimalType.precision(), decimalType.scale());
+		} else if (type instanceof ArrayType) {
+			return row.getArray(ordinal);
+		} else if (type instanceof MapType) {
+			return row.getMap(ordinal);
+		} else if (type instanceof RowType) {
+			return row.getRow(ordinal, ((RowType) type).getArity());
+		} else if (type instanceof GenericType) {
+			return row.getGeneric(ordinal);
+		} else if (type.equals(InternalTypes.BINARY)) {
+			return row.getBinary(ordinal);
+		} else {
+			throw new RuntimeException("Not support type: " + type);
+		}
+	}
 }

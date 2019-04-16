@@ -20,7 +20,6 @@ package org.apache.flink.table.api.stream.sql
 
 import org.apache.flink.api.scala._
 import org.apache.flink.table.api.scala._
-import org.apache.flink.table.plan.logical._
 import org.apache.flink.table.runtime.utils.JavaUserDefinedAggFunctions.WeightedAvgWithMerge
 import org.apache.flink.table.utils.TableTestUtil._
 import org.apache.flink.table.utils.{StreamTableTestUtil, TableTestBase}
@@ -52,7 +51,7 @@ class GroupWindowTest extends TableTestBase {
             streamTableNode(0),
             term("select", "rowtime", "c", "a")
           ),
-          term("window", TumblingGroupWindow('w$, 'rowtime, 900000.millis)),
+          term("window", "TumblingGroupWindow('w$, 'rowtime, 900000.millis)"),
           term("select",
             "COUNT(*) AS EXPR$0",
               "weightedAvg(c, a) AS wAvg",
@@ -86,7 +85,7 @@ class GroupWindowTest extends TableTestBase {
             streamTableNode(0),
             term("select", "proctime", "c", "a")
           ),
-          term("window", SlidingGroupWindow('w$, 'proctime, 3600000.millis, 900000.millis)),
+          term("window", "SlidingGroupWindow('w$, 'proctime, 3600000.millis, 900000.millis)"),
           term("select",
             "COUNT(*) AS EXPR$0",
               "weightedAvg(c, a) AS wAvg",
@@ -121,7 +120,7 @@ class GroupWindowTest extends TableTestBase {
             streamTableNode(0),
             term("select", "proctime", "c", "a")
           ),
-          term("window", SessionGroupWindow('w$, 'proctime, 900000.millis)),
+          term("window", "SessionGroupWindow('w$, 'proctime, 900000.millis)"),
           term("select",
             "COUNT(*) AS EXPR$0",
             "weightedAvg(c, a) AS wAvg",
@@ -153,7 +152,7 @@ class GroupWindowTest extends TableTestBase {
             streamTableNode(0),
             term("select", "rowtime")
           ),
-          term("window", TumblingGroupWindow('w$, 'rowtime, 900000.millis)),
+          term("window", "TumblingGroupWindow('w$, 'rowtime, 900000.millis)"),
           term("select",
             "COUNT(*) AS EXPR$0",
             "start('w$) AS w$start",
@@ -189,7 +188,7 @@ class GroupWindowTest extends TableTestBase {
             streamTableNode(0),
             term("select", "rowtime, a")
           ),
-          term("window", SlidingGroupWindow('w$, 'rowtime, 60000.millis, 900000.millis)),
+          term("window", "SlidingGroupWindow('w$, 'rowtime, 60000.millis, 900000.millis)"),
           term("select",
             "COUNT(*) AS EXPR$0",
             "SUM(a) AS $f1",
@@ -237,7 +236,7 @@ class GroupWindowTest extends TableTestBase {
                 streamTableNode(0),
                 term("select", "rowtime, a")
               ),
-              term("window", TumblingGroupWindow('w$, 'rowtime, 2.millis)),
+              term("window", "TumblingGroupWindow('w$, 'rowtime, 2.millis)"),
               term("select",
                 "COUNT(a) AS a",
                 "start('w$) AS w$start",
@@ -247,7 +246,7 @@ class GroupWindowTest extends TableTestBase {
             ),
             term("select", "a", "w$rowtime AS zzzzz")
           ),
-          term("window", TumblingGroupWindow('w$, 'zzzzz, 4.millis)),
+          term("window", "TumblingGroupWindow('w$, 'zzzzz, 4.millis)"),
           term("select",
             "COUNT(*) AS a",
             "start('w$) AS w$start",
@@ -279,27 +278,23 @@ class GroupWindowTest extends TableTestBase {
           unaryNode(
             "DataStreamCalc",
             streamTableNode(0),
-            term("select", "rowtime", "c",
-              "*(c, c) AS $f2", "*(c, c) AS $f3", "*(c, c) AS $f4", "*(c, c) AS $f5")
+            term("select", "rowtime", "c", "*(c, c) AS $f2")
           ),
-          term("window", TumblingGroupWindow('w$, 'rowtime, 900000.millis)),
+          term("window", "TumblingGroupWindow('w$, 'rowtime, 900000.millis)"),
           term("select",
             "SUM($f2) AS $f0",
             "SUM(c) AS $f1",
             "COUNT(c) AS $f2",
-            "SUM($f3) AS $f3",
-            "SUM($f4) AS $f4",
-            "SUM($f5) AS $f5",
             "start('w$) AS w$start",
             "end('w$) AS w$end",
             "rowtime('w$) AS w$rowtime",
             "proctime('w$) AS w$proctime")
         ),
         term("select",
-          "CAST(/(-($f0, /(*($f1, $f1), $f2)), $f2)) AS EXPR$0",
-          "CAST(/(-($f3, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1)))) AS EXPR$1",
-          "CAST(POWER(/(-($f4, /(*($f1, $f1), $f2)), $f2), 0.5)) AS EXPR$2",
-          "CAST(POWER(/(-($f5, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1))), 0.5)) " +
+          "/(-($f0, /(*($f1, $f1), $f2)), $f2) AS EXPR$0",
+          "/(-($f0, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1))) AS EXPR$1",
+          "CAST(POWER(/(-($f0, /(*($f1, $f1), $f2)), $f2), 0.5)) AS EXPR$2",
+          "CAST(POWER(/(-($f0, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1))), 0.5)) " +
             "AS EXPR$3",
           "w$start AS EXPR$4",
           "w$end AS EXPR$5")

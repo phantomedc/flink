@@ -41,7 +41,6 @@ import org.apache.flink.runtime.checkpoint.CheckpointType;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.AbstractKeyedStateBackend;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
-import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.KeyGroupedInternalPriorityQueue;
 import org.apache.flink.runtime.state.Keyed;
 import org.apache.flink.runtime.state.KeyedStateHandle;
@@ -50,11 +49,11 @@ import org.apache.flink.runtime.state.PriorityQueueSetFactory;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.RegisteredStateMetaInfoBase;
 import org.apache.flink.runtime.state.SnapshotResult;
-import org.apache.flink.runtime.state.StateSerializerProvider;
 import org.apache.flink.runtime.state.StateSnapshotTransformer.StateSnapshotTransformFactory;
 import org.apache.flink.runtime.state.StreamCompressionDecorator;
 import org.apache.flink.runtime.state.heap.HeapPriorityQueueElement;
 import org.apache.flink.runtime.state.heap.HeapPriorityQueueSetFactory;
+import org.apache.flink.runtime.state.heap.InternalKeyContext;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.util.FileUtils;
 import org.apache.flink.util.FlinkRuntimeException;
@@ -78,7 +77,6 @@ import javax.annotation.Nonnull;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -127,9 +125,6 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 			RocksDBKeyedStateBackend<K> backend) throws Exception;
 	}
 
-	/** String that identifies the operator that owns this backend. */
-	private final String operatorIdentifier;
-
 	/** Factory function to create column family options from state name. */
 	private final Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory;
 
@@ -158,9 +153,6 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
 	/** Number of bytes required to prefix the key groups. */
 	private final int keyGroupPrefixBytes;
-
-	/** Thread number used to transfer state files while restoring/snapshotting. */
-	private final int numberOfTransferingThreads;
 
 	/**
 	 * We are not using the default column family for Flink state ops, but we still need to remember this handle so that
@@ -202,17 +194,13 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 	private final RocksDbTtlCompactFiltersManager ttlCompactFiltersManager;
 
 	public RocksDBKeyedStateBackend(
-		String operatorIdentifier,
 		ClassLoader userCodeClassLoader,
 		File instanceBasePath,
 		DBOptions dbOptions,
 		Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
 		TaskKvStateRegistry kvStateRegistry,
-		StateSerializerProvider<K> keySerializerProvider,
-		int numberOfKeyGroups,
-		KeyGroupRange keyGroupRange,
+		TypeSerializer<K> keySerializer,
 		ExecutionConfig executionConfig,
-		int numberOfTransferingThreads,
 		TtlTimeProvider ttlTimeProvider,
 		RocksDB db,
 		LinkedHashMap<String, RocksDbKvStateInfo> kvStateInformation,
@@ -227,16 +215,20 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 		RocksDBNativeMetricMonitor nativeMetricMonitor,
 		RocksDBSerializedCompositeKeyBuilder<K> sharedRocksKeyBuilder,
 		PriorityQueueSetFactory priorityQueueFactory,
-		RocksDbTtlCompactFiltersManager ttlCompactFiltersManager) {
+		RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
+		InternalKeyContext<K> keyContext) {
 
-		super(kvStateRegistry, keySerializerProvider, userCodeClassLoader, numberOfKeyGroups,
-			keyGroupRange, executionConfig, ttlTimeProvider, cancelStreamRegistry, keyGroupCompressionDecorator);
+		super(
+			kvStateRegistry,
+			keySerializer,
+			userCodeClassLoader,
+			executionConfig,
+			ttlTimeProvider,
+			cancelStreamRegistry,
+			keyGroupCompressionDecorator,
+			keyContext);
 
 		this.ttlCompactFiltersManager = ttlCompactFiltersManager;
-
-		this.operatorIdentifier = Preconditions.checkNotNull(operatorIdentifier);
-
-		this.numberOfTransferingThreads = numberOfTransferingThreads;
 
 		// ensure that we use the right merge operator, because other code relies on this
 		this.columnFamilyOptionsFactory = Preconditions.checkNotNull(columnFamilyOptionsFactory);
@@ -450,11 +442,6 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 	}
 
 	@Override
-	public void restore(Collection<KeyedStateHandle> restoreState) {
-		// all restore work done in builder and nothing to do here
-	}
-
-	@Override
 	public void notifyCheckpointComplete(long completedCheckpointId) throws Exception {
 
 		if (checkpointSnapshotStrategy != null) {
@@ -506,8 +493,8 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 				stateSerializer,
 				StateSnapshotTransformFactory.noTransform());
 
-			newRocksStateInfo = RocksDBOperationUtils.createStateInfo(newMetaInfo, ttlCompactFiltersManager,
-				ttlTimeProvider, db, columnFamilyOptionsFactory);
+			newRocksStateInfo = RocksDBOperationUtils.createStateInfo(
+				newMetaInfo, db, columnFamilyOptionsFactory, ttlCompactFiltersManager);
 			RocksDBOperationUtils.registerKvStateInformation(this.kvStateInformation, this.nativeMetricMonitor,
 				stateDesc.getName(), newRocksStateInfo);
 		}

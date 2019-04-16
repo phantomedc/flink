@@ -25,6 +25,7 @@ import org.apache.flink.configuration.ConfigurationUtils;
 import org.apache.flink.configuration.GlobalConfiguration;
 import org.apache.flink.configuration.TaskManagerOptions;
 import org.apache.flink.core.fs.FileSystem;
+import org.apache.flink.core.plugin.PluginUtils;
 import org.apache.flink.runtime.akka.AkkaUtils;
 import org.apache.flink.runtime.blob.BlobCacheService;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
@@ -58,15 +59,14 @@ import org.apache.flink.util.AutoCloseableAsync;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.ExecutorUtils;
 
-import akka.actor.ActorSystem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -99,8 +99,6 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 
 	private final RpcService rpcService;
 
-	private final ActorSystem metricQueryServiceActorSystem;
-
 	private final HighAvailabilityServices highAvailabilityServices;
 
 	private final MetricRegistryImpl metricRegistry;
@@ -132,14 +130,13 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 			HighAvailabilityServicesUtils.AddressResolution.TRY_ADDRESS_RESOLUTION);
 
 		rpcService = createRpcService(configuration, highAvailabilityServices);
-		metricQueryServiceActorSystem = MetricUtils.startMetricsActorSystem(configuration, rpcService.getAddress(), LOG);
 
 		HeartbeatServices heartbeatServices = HeartbeatServices.fromConfiguration(configuration);
 
 		metricRegistry = new MetricRegistryImpl(MetricRegistryConfiguration.fromConfiguration(configuration));
 
-		// TODO: Temporary hack until the MetricQueryService has been ported to RpcEndpoint
-		metricRegistry.startQueryService(metricQueryServiceActorSystem, resourceId);
+		final RpcService metricQueryServiceRpcService = MetricUtils.startMetricsRpcService(configuration, rpcService.getAddress());
+		metricRegistry.startQueryService(metricQueryServiceRpcService, resourceId);
 
 		blobCacheService = new BlobCacheService(
 			configuration, highAvailabilityServices.createBlobStore(), null
@@ -159,7 +156,7 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 		this.terminationFuture = new CompletableFuture<>();
 		this.shutdown = false;
 
-		MemoryLogger.startIfConfigured(LOG, configuration, metricQueryServiceActorSystem);
+		MemoryLogger.startIfConfigured(LOG, configuration, terminationFuture);
 	}
 
 	// --------------------------------------------------------------------------------------------
@@ -211,10 +208,6 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 				metricRegistry.shutdown();
 			} catch (Exception e) {
 				exception = ExceptionUtils.firstOrSuppressed(e, exception);
-			}
-
-			if (metricQueryServiceActorSystem != null) {
-				terminationFutures.add(AkkaUtils.terminateActorSystem(metricQueryServiceActorSystem));
 			}
 
 			try {
@@ -286,12 +279,8 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 
 		final Configuration configuration = loadConfiguration(args);
 
-		try {
-			FileSystem.initialize(configuration);
-		} catch (IOException e) {
-			throw new IOException("Error while setting the default " +
-				"filesystem scheme from configuration.", e);
-		}
+		//TODO provide plugin path.
+		FileSystem.initialize(configuration, PluginUtils.createPluginManagerFromRootFolder(Optional.empty()));
 
 		SecurityUtils.install(new SecurityConfiguration(configuration));
 
@@ -361,6 +350,7 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 		TaskManagerServicesConfiguration taskManagerServicesConfiguration =
 			TaskManagerServicesConfiguration.fromConfiguration(
 				configuration,
+				EnvironmentInformation.getMaxJvmHeapMemory(),
 				remoteAddress,
 				localCommunicationOnly);
 
@@ -379,7 +369,7 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 
 		TaskManagerConfiguration taskManagerConfiguration = TaskManagerConfiguration.fromConfiguration(configuration);
 
-		String metricQueryServicePath = metricRegistry.getMetricQueryServicePath();
+		String metricQueryServiceAddress = metricRegistry.getMetricQueryServiceGatewayRpcAddress();
 
 		return new TaskExecutor(
 			rpcService,
@@ -388,7 +378,7 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 			taskManagerServices,
 			heartbeatServices,
 			taskManagerMetricGroup,
-			metricQueryServicePath,
+			metricQueryServiceAddress,
 			blobCacheService,
 			fatalErrorHandler);
 	}

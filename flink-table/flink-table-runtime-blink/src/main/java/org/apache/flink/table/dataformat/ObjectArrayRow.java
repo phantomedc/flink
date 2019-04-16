@@ -60,8 +60,18 @@ public abstract class ObjectArrayRow implements BaseRow {
 	}
 
 	@Override
+	public void setDecimal(int i, Decimal value, int precision) {
+		this.fields[i] = value;
+	}
+
+	@Override
 	public BinaryString getString(int ordinal) {
 		return (BinaryString) this.fields[ordinal];
+	}
+
+	@Override
+	public byte[] getBinary(int ordinal) {
+		return (byte[]) this.fields[ordinal];
 	}
 
 	@Override
@@ -72,6 +82,21 @@ public abstract class ObjectArrayRow implements BaseRow {
 	@Override
 	public BinaryMap getMap(int ordinal) {
 		return (BinaryMap) this.fields[ordinal];
+	}
+
+	@Override
+	public Decimal getDecimal(int ordinal, int precision, int scale) {
+		return (Decimal) this.fields[ordinal];
+	}
+
+	@Override
+	public <T> BinaryGeneric<T> getGeneric(int ordinal) {
+		return (BinaryGeneric) this.fields[ordinal];
+	}
+
+	@Override
+	public BaseRow getRow(int ordinal, int numFields) {
+		return (BaseRow) this.fields[ordinal];
 	}
 
 	@Override
@@ -100,5 +125,17 @@ public abstract class ObjectArrayRow implements BaseRow {
 		} else {
 			return false;
 		}
+	}
+
+	public boolean equalsWithoutHeader(BaseRow o) {
+		if (this == o) {
+			return true;
+		}
+		if (o == null || !(o instanceof ObjectArrayRow)) {
+			return false;
+		}
+
+		ObjectArrayRow row = (ObjectArrayRow) o;
+		return Arrays.equals(fields, row.fields);
 	}
 }

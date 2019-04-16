@@ -760,6 +760,8 @@ Parameters:
 
 - `apikey` - the Datadog API key
 - `tags` - (optional) the global tags that will be applied to metrics when sending to Datadog. Tags should be separated by comma only
+- `proxyHost` - (optional) The proxy host to use when sending to Datadog.
+- `proxyPort` - (optional) The proxy port to use when sending to Datadog, defaults to 8080.
 
 Example configuration:
 
@@ -768,6 +770,8 @@ Example configuration:
 metrics.reporter.dghttp.class: org.apache.flink.metrics.datadog.DatadogHttpReporter
 metrics.reporter.dghttp.apikey: xxx
 metrics.reporter.dghttp.tags: myflinkapp,prod
+metrics.reporter.dghttp.proxyHost: my.web.proxy.com
+metrics.reporter.dghttp.proxyPort: 8080
 
 {% endhighlight %}
 
@@ -1659,7 +1663,7 @@ the markers will reflect that.
 
 The `LatencyMarker`s are used to derive a distribution of the latency between the sources of the topology and each 
 downstream operator. These distributions are reported as histogram metrics. The granularity of these distributions can 
-be controlled in the [Flink configuration]({{ site.baseurl }}/ops/config.html#metrics-latency-interval. For the highest 
+be controlled in the [Flink configuration]({{ site.baseurl }}/ops/config.html#metrics-latency-interval). For the highest 
 granularity `subtask` Flink will derive the latency distribution between every source subtask and every downstream 
 subtask, which results in quadratic (in the terms of the parallelism) number of histograms. 
 

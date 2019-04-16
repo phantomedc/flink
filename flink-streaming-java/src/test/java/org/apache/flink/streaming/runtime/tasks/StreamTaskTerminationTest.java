@@ -22,6 +22,7 @@ import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.testutils.OneShotLatch;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.blob.BlobCacheService;
@@ -51,6 +52,7 @@ import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobgraph.tasks.InputSplitProvider;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
+import org.apache.flink.runtime.query.KvStateRegistry;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.AbstractKeyedStateBackend;
 import org.apache.flink.runtime.state.CheckpointStorage;
@@ -65,6 +67,7 @@ import org.apache.flink.runtime.state.StateBackend;
 import org.apache.flink.runtime.state.TestTaskStateManager;
 import org.apache.flink.runtime.state.memory.MemoryBackendCheckpointStorage;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
+import org.apache.flink.runtime.taskexecutor.KvStateService;
 import org.apache.flink.runtime.taskexecutor.TestGlobalAggregateManager;
 import org.apache.flink.runtime.taskmanager.CheckpointResponder;
 import org.apache.flink.runtime.taskmanager.Task;
@@ -81,6 +84,8 @@ import org.apache.flink.util.TestLogger;
 
 import org.junit.Assert;
 import org.junit.Test;
+
+import javax.annotation.Nonnull;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -144,10 +149,7 @@ public class StreamTaskTerminationTest extends TestLogger {
 
 		final TaskManagerRuntimeInfo taskManagerRuntimeInfo = new TestingTaskManagerRuntimeInfo();
 
-		TaskEventDispatcher taskEventDispatcher = new TaskEventDispatcher();
 		final NetworkEnvironment networkEnv = mock(NetworkEnvironment.class);
-		when(networkEnv.createKvStateTaskRegistry(any(JobID.class), any(JobVertexID.class))).thenReturn(mock(TaskKvStateRegistry.class));
-		when(networkEnv.getTaskEventDispatcher()).thenReturn(taskEventDispatcher);
 
 		BlobCacheService blobService =
 			new BlobCacheService(mock(PermanentBlobCache.class), mock(TransientBlobCache.class));
@@ -165,7 +167,9 @@ public class StreamTaskTerminationTest extends TestLogger {
 			new MemoryManager(32L * 1024L, 1),
 			new IOManagerAsync(),
 			networkEnv,
+			new KvStateService(new KvStateRegistry(), null, null),
 			mock(BroadcastVariableManager.class),
+			new TaskEventDispatcher(),
 			new TestTaskStateManager(),
 			mock(TaskManagerActions.class),
 			mock(InputSplitProvider.class),
@@ -270,12 +274,17 @@ public class StreamTaskTerminationTest extends TestLogger {
 			TaskKvStateRegistry kvStateRegistry,
 			TtlTimeProvider ttlTimeProvider,
 			MetricGroup metricGroup,
-			Collection<KeyedStateHandle> stateHandles) {
+			@Nonnull Collection<KeyedStateHandle> stateHandles,
+			CloseableRegistry cancelStreamRegistry) {
 			return null;
 		}
 
 		@Override
-		public OperatorStateBackend createOperatorStateBackend(Environment env, String operatorIdentifier) throws Exception {
+		public OperatorStateBackend createOperatorStateBackend(
+			Environment env,
+			String operatorIdentifier,
+			@Nonnull Collection<OperatorStateHandle> stateHandles,
+			CloseableRegistry cancelStreamRegistry) throws Exception {
 			OperatorStateBackend operatorStateBackend = mock(OperatorStateBackend.class);
 			when(operatorStateBackend.snapshot(anyLong(), anyLong(), any(CheckpointStreamFactory.class), any(CheckpointOptions.class)))
 				.thenReturn(new FutureTask<>(new BlockingCallable()));

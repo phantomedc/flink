@@ -24,7 +24,10 @@ import org.apache.flink.util.Preconditions;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.apache.flink.table.expressions.FunctionDefinition.Type.AGGREGATE_FUNCTION;
 import static org.apache.flink.table.expressions.FunctionDefinition.Type.OTHER_FUNCTION;
@@ -44,7 +47,7 @@ public final class BuiltInFunctionDefinitions {
 	public static final FunctionDefinition NOT =
 		new FunctionDefinition("not", SCALAR_FUNCTION);
 	public static final FunctionDefinition IF =
-		new FunctionDefinition("if", SCALAR_FUNCTION);
+		new FunctionDefinition("ifThenElse", SCALAR_FUNCTION);
 
 	// comparison functions
 	public static final FunctionDefinition EQUALS =
@@ -110,7 +113,7 @@ public final class BuiltInFunctionDefinitions {
 	public static final FunctionDefinition LIKE =
 		new FunctionDefinition("like", SCALAR_FUNCTION);
 	public static final FunctionDefinition LOWER =
-		new FunctionDefinition("lower", SCALAR_FUNCTION);
+		new FunctionDefinition("lowerCase", SCALAR_FUNCTION);
 	public static final FunctionDefinition SIMILAR =
 		new FunctionDefinition("similar", SCALAR_FUNCTION);
 	public static final FunctionDefinition SUBSTRING =
@@ -120,7 +123,7 @@ public final class BuiltInFunctionDefinitions {
 	public static final FunctionDefinition TRIM =
 		new FunctionDefinition("trim", SCALAR_FUNCTION);
 	public static final FunctionDefinition UPPER =
-		new FunctionDefinition("upper", SCALAR_FUNCTION);
+		new FunctionDefinition("upperCase", SCALAR_FUNCTION);
 	public static final FunctionDefinition POSITION =
 		new FunctionDefinition("position", SCALAR_FUNCTION);
 	public static final FunctionDefinition OVERLAY =
@@ -249,10 +252,6 @@ public final class BuiltInFunctionDefinitions {
 		new FunctionDefinition("dateFormat", SCALAR_FUNCTION);
 	public static final FunctionDefinition TIMESTAMP_DIFF =
 		new FunctionDefinition("timestampDiff", SCALAR_FUNCTION);
-	public static final FunctionDefinition TEMPORAL_FLOOR =
-		new FunctionDefinition("temporalFloor", SCALAR_FUNCTION);
-	public static final FunctionDefinition TEMPORAL_CEIL =
-		new FunctionDefinition("temporalCeil", SCALAR_FUNCTION);
 
 	// collection
 	public static final FunctionDefinition AT =
@@ -329,6 +328,12 @@ public final class BuiltInFunctionDefinitions {
 		new FunctionDefinition("as", OTHER_FUNCTION);
 	public static final FunctionDefinition STREAM_RECORD_TIMESTAMP =
 		new FunctionDefinition("streamRecordTimestamp", OTHER_FUNCTION);
+
+	public static final Set<FunctionDefinition> WINDOW_PROPERTIES = new HashSet<>(Arrays.asList(
+		WINDOW_START, WINDOW_END, PROCTIME, ROWTIME
+	));
+
+	public static final List<FunctionDefinition> ORDERING = Arrays.asList(ORDER_ASC, ORDER_DESC);
 
 	public static List<FunctionDefinition> getDefinitions() {
 		final Field[] fields = BuiltInFunctionDefinitions.class.getFields();

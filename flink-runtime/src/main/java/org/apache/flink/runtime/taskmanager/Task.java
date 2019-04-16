@@ -49,11 +49,13 @@ import org.apache.flink.runtime.executiongraph.TaskInformation;
 import org.apache.flink.runtime.filecache.FileCache;
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
 import org.apache.flink.runtime.io.network.NetworkEnvironment;
+import org.apache.flink.runtime.io.network.TaskEventDispatcher;
 import org.apache.flink.runtime.io.network.netty.PartitionProducerStateChecker;
 import org.apache.flink.runtime.io.network.partition.ResultPartition;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionConsumableNotifier;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionMetrics;
+import org.apache.flink.runtime.io.network.partition.consumer.InputGate;
 import org.apache.flink.runtime.io.network.partition.consumer.InputGateMetrics;
 import org.apache.flink.runtime.io.network.partition.consumer.SingleInputGate;
 import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
@@ -68,6 +70,7 @@ import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.CheckpointListener;
 import org.apache.flink.runtime.state.TaskStateManager;
 import org.apache.flink.runtime.taskexecutor.GlobalAggregateManager;
+import org.apache.flink.runtime.taskexecutor.KvStateService;
 import org.apache.flink.runtime.util.FatalExitExceptionHandler;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.FlinkException;
@@ -183,6 +186,8 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 	/** The BroadcastVariableManager to be used by this task. */
 	private final BroadcastVariableManager broadcastVariableManager;
 
+	private final TaskEventDispatcher taskEventDispatcher;
+
 	/** The manager for state of operators running in this task/slot. */
 	private final TaskStateManager taskStateManager;
 
@@ -218,6 +223,9 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 
 	/** The gateway to the network stack, which handles inputs and produced results. */
 	private final NetworkEnvironment network;
+
+	/** The service for kvState registration of this task. */
+	private final KvStateService kvStateService;
 
 	/** The registry of this task which enables live reporting of accumulators. */
 	private final AccumulatorRegistry accumulatorRegistry;
@@ -286,7 +294,9 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 		MemoryManager memManager,
 		IOManager ioManager,
 		NetworkEnvironment networkEnvironment,
+		KvStateService kvStateService,
 		BroadcastVariableManager bcVarManager,
+		TaskEventDispatcher taskEventDispatcher,
 		TaskStateManager taskStateManager,
 		TaskManagerActions taskManagerActions,
 		InputSplitProvider inputSplitProvider,
@@ -335,6 +345,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 		this.memoryManager = Preconditions.checkNotNull(memManager);
 		this.ioManager = Preconditions.checkNotNull(ioManager);
 		this.broadcastVariableManager = Preconditions.checkNotNull(bcVarManager);
+		this.taskEventDispatcher = Preconditions.checkNotNull(taskEventDispatcher);
 		this.taskStateManager = Preconditions.checkNotNull(taskStateManager);
 		this.accumulatorRegistry = new AccumulatorRegistry(jobId, executionId);
 
@@ -347,6 +358,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 		this.libraryCache = Preconditions.checkNotNull(libraryCache);
 		this.fileCache = Preconditions.checkNotNull(fileCache);
 		this.network = Preconditions.checkNotNull(networkEnvironment);
+		this.kvStateService = Preconditions.checkNotNull(kvStateService);
 		this.taskManagerConfig = Preconditions.checkNotNull(taskManagerConfig);
 
 		this.metrics = metricGroup;
@@ -392,9 +404,9 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 			SingleInputGate gate = SingleInputGate.create(
 				taskNameWithSubtaskAndId,
 				jobId,
-				executionId,
 				inputGateDeploymentDescriptor,
 				networkEnvironment,
+				taskEventDispatcher,
 				this,
 				metricGroup.getIOMetricGroup());
 
@@ -613,6 +625,10 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 
 			network.registerTask(this);
 
+			for (ResultPartition partition : producedPartitions) {
+				taskEventDispatcher.registerPartition(partition.getPartitionId());
+			}
+
 			// add metrics for buffers
 			this.metrics.getIOMetricGroup().initializeBufferMetrics(this);
 
@@ -657,7 +673,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 			//  call the user code initialization methods
 			// ----------------------------------------------------------------
 
-			TaskKvStateRegistry kvStateRegistry = network.createKvStateTaskRegistry(jobId, getJobVertexId());
+			TaskKvStateRegistry kvStateRegistry = kvStateService.createKvStateTaskRegistry(jobId, getJobVertexId());
 
 			Environment env = new RuntimeEnvironment(
 				jobId,
@@ -679,7 +695,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 				distributedCacheEntries,
 				producedPartitions,
 				inputGates,
-				network.getTaskEventDispatcher(),
+				taskEventDispatcher,
 				checkpointResponder,
 				taskManagerConfig,
 				metrics,
@@ -818,6 +834,10 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 				ExecutorService dispatcher = this.asyncCallDispatcher;
 				if (dispatcher != null && !dispatcher.isShutdown()) {
 					dispatcher.shutdownNow();
+				}
+
+				for (ResultPartition partition : producedPartitions) {
+					taskEventDispatcher.unregisterPartition(partition.getPartitionId());
 				}
 
 				// free the network resources
@@ -1442,7 +1462,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 		private final Thread executer;
 		private final String taskName;
 		private final ResultPartition[] producedPartitions;
-		private final SingleInputGate[] inputGates;
+		private final InputGate[] inputGates;
 
 		public TaskCanceler(
 				Logger logger,
@@ -1450,7 +1470,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 				Thread executer,
 				String taskName,
 				ResultPartition[] producedPartitions,
-				SingleInputGate[] inputGates) {
+				InputGate[] inputGates) {
 
 			this.logger = logger;
 			this.invokable = invokable;
@@ -1481,16 +1501,16 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 				// will get misleading errors in the logs.
 				for (ResultPartition partition : producedPartitions) {
 					try {
-						partition.destroyBufferPool();
+						partition.close();
 					} catch (Throwable t) {
 						ExceptionUtils.rethrowIfFatalError(t);
 						LOG.error("Failed to release result partition buffer pool for task {}.", taskName, t);
 					}
 				}
 
-				for (SingleInputGate inputGate : inputGates) {
+				for (InputGate inputGate : inputGates) {
 					try {
-						inputGate.releaseAllResources();
+						inputGate.close();
 					} catch (Throwable t) {
 						ExceptionUtils.rethrowIfFatalError(t);
 						LOG.error("Failed to release input gate for task {}.", taskName, t);

@@ -21,16 +21,18 @@ package org.apache.flink.table.api.stream.table
 import java.sql.Timestamp
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.{TableSchema, ValidationException}
 import org.apache.flink.table.api.scala._
 import org.apache.flink.table.api.stream.table.TemporalTableJoinTest._
-import org.apache.flink.table.expressions.ResolvedFieldReference
-import org.apache.flink.table.functions.TemporalTableFunction
+import org.apache.flink.table.api.{TableSchema, Types, ValidationException}
+import org.apache.flink.table.expressions.{Expression, FieldReferenceExpression}
+import org.apache.flink.table.functions.{TemporalTableFunction, TemporalTableFunctionImpl}
 import org.apache.flink.table.plan.logical.rel.LogicalTemporalTableJoin._
+import org.apache.flink.table.typeutils.TimeIndicatorTypeInfo
+import org.apache.flink.table.typeutils.TimeIndicatorTypeInfo.{PROCTIME_INDICATOR, ROWTIME_INDICATOR}
 import org.apache.flink.table.utils.TableTestUtil._
 import org.apache.flink.table.utils._
-import org.hamcrest.Matchers.startsWith
-import org.junit.Assert.{assertArrayEquals, assertEquals, assertTrue}
+import org.hamcrest.Matchers.{equalTo, startsWith}
+import org.junit.Assert.{assertArrayEquals, assertEquals, assertThat, assertTrue}
 import org.junit.Test
 
 class TemporalTableJoinTest extends TableTestBase {
@@ -132,21 +134,11 @@ class TemporalTableJoinTest extends TableTestBase {
     expectedException.expectMessage(startsWith("Unsupported argument"))
 
     val result = orders
-      .join(rates(
+      .joinLateral(rates(
         java.sql.Timestamp.valueOf("2016-06-27 10:10:42.123")),
-        "o_currency = currency")
+        'o_currency === 'currency)
       .select("o_amount * rate")
 
-    util.printTable(result)
-  }
-
-  @Test
-  def testTemporalTableFunctionScan(): Unit = {
-    expectedException.expect(classOf[ValidationException])
-    expectedException.expectMessage(
-      "Cannot translate a query with an unbounded table function call")
-
-    val result = rates(java.sql.Timestamp.valueOf("2016-06-27 10:10:42.123"))
     util.printTable(result)
   }
 
@@ -163,19 +155,26 @@ class TemporalTableJoinTest extends TableTestBase {
 
   private def assertRatesFunction(
       expectedSchema: TableSchema,
-      rates: TemporalTableFunction,
+      inputRates: TemporalTableFunction,
       proctime: Boolean = false): Unit = {
-    assertEquals("currency", rates.getPrimaryKey)
-    assertTrue(rates.getTimeAttribute.isInstanceOf[ResolvedFieldReference])
+    val rates = inputRates.asInstanceOf[TemporalTableFunctionImpl]
+    assertThat(rates.getPrimaryKey,
+      equalTo[Expression](new FieldReferenceExpression("currency", Types.STRING, 0, 0)))
+
+    val (timeFieldName, timeFieldType) =
+      if (proctime) {
+        ("proctime", PROCTIME_INDICATOR)
+      }
+      else {
+        ("rowtime", ROWTIME_INDICATOR)
+      }
+
+    assertThat(rates.getTimeAttribute,
+      equalTo[Expression](new FieldReferenceExpression(timeFieldName, timeFieldType, 0, 2)))
+
     assertEquals(
-      if (proctime) "proctime" else "rowtime",
-      rates.getTimeAttribute.asInstanceOf[ResolvedFieldReference].name)
-    assertArrayEquals(
-      expectedSchema.getFieldNames.asInstanceOf[Array[Object]],
-      rates.getResultType.getFieldNames.asInstanceOf[Array[Object]])
-    assertArrayEquals(
-      expectedSchema.getFieldTypes.asInstanceOf[Array[Object]],
-      rates.getResultType.getFieldTypes.asInstanceOf[Array[Object]])
+      expectedSchema.toRowType,
+      rates.getResultType)
   }
 }
 

@@ -313,16 +313,17 @@ abstract class StreamTableEnvironment(
     * Internally, the [[Table]] is translated into a [[DataStream]] and handed over to the
     * [[TableSink]] to write it.
     *
-    * @param table The [[Table]] to write.
+    * @param inputTable The [[Table]] to write.
     * @param sink The [[TableSink]] to write the [[Table]] to.
     * @param queryConfig The configuration for the query to generate.
     * @tparam T The expected type of the [[DataStream]] which represents the [[Table]].
     */
   override private[flink] def writeToSink[T](
-      table: Table,
+      inputTable: Table,
       sink: TableSink[T],
       queryConfig: QueryConfig): Unit = {
 
+    val table = inputTable.asInstanceOf[TableImpl]
     // Check query configuration
     val streamQueryConfig = queryConfig match {
       case streamConfig: StreamQueryConfig => streamConfig
@@ -541,12 +542,13 @@ abstract class StreamTableEnvironment(
     : Unit = {
 
     val streamType = dataStream.getType
+    val bridgedFields = fields.map(expressionBridge.bridge).toArray[Expression]
 
     // get field names and types for all non-replaced fields
-    val (fieldNames, fieldIndexes) = getFieldInfo[T](streamType, fields)
+    val (fieldNames, fieldIndexes) = getFieldInfo[T](streamType, bridgedFields)
 
     // validate and extract time attributes
-    val (rowtime, proctime) = validateAndExtractTimeAttributes(streamType, fields)
+    val (rowtime, proctime) = validateAndExtractTimeAttributes(streamType, bridgedFields)
 
     // check if event-time is enabled
     if (rowtime.isDefined && execEnv.getStreamTimeCharacteristic != TimeCharacteristic.EventTime) {
@@ -807,7 +809,7 @@ abstract class StreamTableEnvironment(
   private[flink] def optimize(relNode: RelNode, updatesAsRetraction: Boolean): RelNode = {
     val convSubQueryPlan = optimizeConvertSubQueries(relNode)
     val expandedPlan = optimizeExpandPlan(convSubQueryPlan)
-    val decorPlan = RelDecorrelator.decorrelateQuery(expandedPlan)
+    val decorPlan = RelDecorrelator.decorrelateQuery(expandedPlan, getRelBuilder)
     val planWithMaterializedTimeAttributes =
       RelTimeIndicatorConverter.convert(decorPlan, getRelBuilder.getRexBuilder)
     val normalizedPlan = optimizeNormalizeLogicalPlan(planWithMaterializedTimeAttributes)
@@ -858,7 +860,7 @@ abstract class StreamTableEnvironment(
       queryConfig: StreamQueryConfig,
       updatesAsRetraction: Boolean,
       withChangeFlag: Boolean)(implicit tpe: TypeInformation[A]): DataStream[A] = {
-    val relNode = table.getRelNode
+    val relNode = table.asInstanceOf[TableImpl].getRelNode
     val dataStreamPlan = optimize(relNode, updatesAsRetraction)
 
     val rowType = getResultType(relNode, dataStreamPlan)
@@ -999,7 +1001,7 @@ abstract class StreamTableEnvironment(
     * @param table The table for which the AST and execution plan will be returned.
     */
   def explain(table: Table): String = {
-    val ast = table.getRelNode
+    val ast = table.asInstanceOf[TableImpl].getRelNode
     val optimizedPlan = optimize(ast, updatesAsRetraction = false)
     val dataStream = translateToCRow(optimizedPlan, queryConfig)
 

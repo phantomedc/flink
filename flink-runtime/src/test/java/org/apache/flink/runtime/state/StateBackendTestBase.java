@@ -53,14 +53,15 @@ import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.api.java.typeutils.runtime.PojoSerializer;
 import org.apache.flink.api.java.typeutils.runtime.kryo.JavaSerializer;
 import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer;
+import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
 import org.apache.flink.core.testutils.CheckedThread;
 import org.apache.flink.core.testutils.OneShotLatch;
+import org.apache.flink.metrics.groups.UnregisteredMetricsGroup;
 import org.apache.flink.queryablestate.KvStateID;
 import org.apache.flink.queryablestate.client.state.serialization.KvStateSerializer;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
 import org.apache.flink.runtime.checkpoint.StateAssignmentOperation;
-import org.apache.flink.runtime.checkpoint.StateObjectCollection;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.highavailability.HighAvailabilityServices;
 import org.apache.flink.runtime.operators.testutils.DummyEnvironment;
@@ -81,6 +82,7 @@ import org.apache.flink.types.IntValue;
 import org.apache.flink.util.IOUtils;
 import org.apache.flink.util.StateMigrationException;
 import org.apache.flink.util.TestLogger;
+import org.hamcrest.Matchers;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -109,6 +111,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static java.util.Arrays.asList;
+import static org.hamcrest.CoreMatchers.anyOf;
+import static org.hamcrest.CoreMatchers.isA;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertEquals;
@@ -135,20 +139,20 @@ public abstract class StateBackendTestBase<B extends AbstractStateBackend> exten
 	public final ExpectedException expectedException = ExpectedException.none();
 
 	// lazily initialized stream storage
-	private CheckpointStorageLocation checkpointStorageLocation;
+	private CheckpointStreamFactory checkpointStreamFactory;
 
 	protected abstract B getStateBackend() throws Exception;
 
 	protected abstract boolean isSerializerPresenceRequiredOnRestore();
 
 	protected CheckpointStreamFactory createStreamFactory() throws Exception {
-		if (checkpointStorageLocation == null) {
-			checkpointStorageLocation = getStateBackend()
+		if (checkpointStreamFactory == null) {
+			checkpointStreamFactory = getStateBackend()
 					.createCheckpointStorage(new JobID())
-					.initializeLocationForCheckpoint(1L);
+					.resolveCheckpointStorageLocation(1L, CheckpointStorageLocationReference.getDefault());
 		}
 
-		return checkpointStorageLocation;
+		return checkpointStreamFactory;
 	}
 
 	protected <K> AbstractKeyedStateBackend<K> createKeyedBackend(TypeSerializer<K> keySerializer) throws Exception {
@@ -170,16 +174,17 @@ public abstract class StateBackendTestBase<B extends AbstractStateBackend> exten
 			Environment env) throws Exception {
 
 		AbstractKeyedStateBackend<K> backend = getStateBackend().createKeyedStateBackend(
-				env,
-				new JobID(),
-				"test_op",
-				keySerializer,
-				numberOfKeyGroups,
-				keyGroupRange,
-				env.getTaskKvStateRegistry(),
-				TtlTimeProvider.DEFAULT);
-
-		backend.restore(Collections.emptyList());
+			env,
+			new JobID(),
+			"test_op",
+			keySerializer,
+			numberOfKeyGroups,
+			keyGroupRange,
+			env.getTaskKvStateRegistry(),
+			TtlTimeProvider.DEFAULT,
+			new UnregisteredMetricsGroup(),
+			Collections.emptyList(),
+			new CloseableRegistry());
 
 		return backend;
 	}
@@ -216,9 +221,9 @@ public abstract class StateBackendTestBase<B extends AbstractStateBackend> exten
 			keyGroupRange,
 			env.getTaskKvStateRegistry(),
 			TtlTimeProvider.DEFAULT,
-			state);
-
-		backend.restore(new StateObjectCollection<>(state));
+			new UnregisteredMetricsGroup(),
+			state,
+			new CloseableRegistry());
 
 		return backend;
 	}
@@ -666,7 +671,8 @@ public abstract class StateBackendTestBase<B extends AbstractStateBackend> exten
 
 			// on the second restore, since the custom serializer will be used for
 			// deserialization, we expect the deliberate failure to be thrown
-			expectedException.expect(ExpectedKryoTestException.class);
+			expectedException.expect(anyOf(isA(ExpectedKryoTestException.class),
+				Matchers.<Throwable>hasProperty("cause", isA(ExpectedKryoTestException.class))));
 
 			// state backends that eagerly deserializes (such as the memory state backend) will fail here
 			backend = restoreKeyedBackend(IntSerializer.INSTANCE, snapshot2, env);
@@ -768,7 +774,8 @@ public abstract class StateBackendTestBase<B extends AbstractStateBackend> exten
 
 			// on the second restore, since the custom serializer will be used for
 			// deserialization, we expect the deliberate failure to be thrown
-			expectedException.expect(ExpectedKryoTestException.class);
+			expectedException.expect(anyOf(isA(ExpectedKryoTestException.class),
+				Matchers.<Throwable>hasProperty("cause", isA(ExpectedKryoTestException.class))));
 
 			// state backends that eagerly deserializes (such as the memory state backend) will fail here
 			backend = restoreKeyedBackend(IntSerializer.INSTANCE, snapshot2, env);

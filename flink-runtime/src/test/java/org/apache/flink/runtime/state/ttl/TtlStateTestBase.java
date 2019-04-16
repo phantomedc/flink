@@ -129,7 +129,6 @@ public abstract class TtlStateTestBase {
 	protected <S extends State> StateDescriptor<S, Object> initTest(StateTtlConfig ttlConfig) throws Exception {
 		this.ttlConfig = ttlConfig;
 		sbetc.createAndRestoreKeyedStateBackend(null);
-		sbetc.restoreSnapshot(null);
 		sbetc.setCurrentKey("defaultKey");
 		StateDescriptor<S, Object> stateDesc = createState();
 		ctx().initTestValues();
@@ -155,7 +154,6 @@ public abstract class TtlStateTestBase {
 
 	private void restoreSnapshot(KeyedStateHandle snapshot, int numberOfKeyGroups) throws Exception {
 		sbetc.createAndRestoreKeyedStateBackend(numberOfKeyGroups, snapshot);
-		sbetc.restoreSnapshot(snapshot);
 		sbetc.setCurrentKey("defaultKey");
 		createState();
 	}
@@ -435,7 +433,6 @@ public abstract class TtlStateTestBase {
 		KeyedStateHandle snapshot = sbetc.takeSnapshot();
 		sbetc.createAndRestoreKeyedStateBackend(snapshot);
 
-		sbetc.restoreSnapshot(snapshot);
 		sbetc.setCurrentKey("defaultKey");
 		sbetc.createState(ctx().createStateDescriptor(), "");
 	}
@@ -518,7 +515,7 @@ public abstract class TtlStateTestBase {
 		// trigger more cleanup by doing something out side of INC_CLEANUP_ALL_KEYS
 		for (int i = INC_CLEANUP_ALL_KEYS; i < INC_CLEANUP_ALL_KEYS * 2; i++) {
 			sbetc.setCurrentKey(Integer.toString(i));
-			if (i / 2 == 0) {
+			if (i % 2 == 0) {
 				ctx().get();
 			} else {
 				ctx().update(ctx().updateEmpty);

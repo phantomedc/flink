@@ -18,7 +18,14 @@
 
 package org.apache.flink.table.plan.nodes.physical.batch
 
+import org.apache.flink.runtime.operators.DamBehavior
+import org.apache.flink.streaming.api.transformations.StreamTransformation
+import org.apache.flink.table.api.BatchTableEnvironment
+import org.apache.flink.table.codegen.CodeGeneratorContext
+import org.apache.flink.table.dataformat.BaseRow
+import org.apache.flink.table.plan.nodes.exec.{BatchExecNode, ExecNode}
 import org.apache.flink.table.plan.schema.DataStreamTable
+import org.apache.flink.table.plan.util.ScanUtil
 
 import org.apache.calcite.plan._
 import org.apache.calcite.rel.`type`.RelDataType
@@ -26,6 +33,9 @@ import org.apache.calcite.rel.core.TableScan
 import org.apache.calcite.rel.metadata.RelMetadataQuery
 import org.apache.calcite.rel.{RelNode, RelWriter}
 
+import java.util
+
+import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 
 /**
@@ -37,13 +47,14 @@ class BatchExecBoundedStreamScan(
     cluster: RelOptCluster,
     traitSet: RelTraitSet,
     table: RelOptTable,
-    rowRelDataType: RelDataType)
+    outputRowType: RelDataType)
   extends TableScan(cluster, traitSet, table)
-  with BatchPhysicalRel {
+  with BatchPhysicalRel
+  with BatchExecNode[BaseRow] {
 
   val boundedStreamTable: DataStreamTable[Any] = getTable.unwrap(classOf[DataStreamTable[Any]])
 
-  override def deriveRowType(): RelDataType = rowRelDataType
+  override def deriveRowType(): RelDataType = outputRowType
 
   override def copy(traitSet: RelTraitSet, inputs: java.util.List[RelNode]): RelNode = {
     new BatchExecBoundedStreamScan(cluster, traitSet, getTable, getRowType)
@@ -60,4 +71,33 @@ class BatchExecBoundedStreamScan(
       .item("fields", getRowType.getFieldNames.asScala.mkString(", "))
   }
 
+  override def getDamBehavior = DamBehavior.PIPELINED
+
+  override def translateToPlanInternal(
+      tableEnv: BatchTableEnvironment): StreamTransformation[BaseRow] = {
+    val config = tableEnv.getConfig
+    val batchTransform = boundedStreamTable.dataStream.getTransformation
+    if (needInternalConversion) {
+      ScanUtil.convertToInternalRow(
+        CodeGeneratorContext(config),
+        batchTransform,
+        boundedStreamTable.fieldIndexes,
+        boundedStreamTable.typeInfo,
+        getRowType,
+        getTable.getQualifiedName,
+        config,
+        None)
+    } else {
+      batchTransform.asInstanceOf[StreamTransformation[BaseRow]]
+    }
+  }
+
+  def needInternalConversion: Boolean = {
+    ScanUtil.hasTimeAttributeField(boundedStreamTable.fieldIndexes) ||
+        ScanUtil.needsConversion(
+          boundedStreamTable.typeInfo,
+          boundedStreamTable.dataStream.getType.getTypeClass)
+  }
+
+  override def getInputNodes: util.List[ExecNode[BatchTableEnvironment, _]] = List()
 }

@@ -46,13 +46,14 @@ import org.apache.flink.streaming.api.environment.{StreamExecutionEnvironment =>
 import org.apache.flink.streaming.api.scala.{StreamExecutionEnvironment => ScalaStreamExecEnv}
 import org.apache.flink.table.api.java.{BatchTableEnvironment => JavaBatchTableEnv, StreamTableEnvironment => JavaStreamTableEnv}
 import org.apache.flink.table.api.scala.{BatchTableEnvironment => ScalaBatchTableEnv, StreamTableEnvironment => ScalaStreamTableEnv}
-import org.apache.flink.table.calcite.{FlinkPlannerImpl, FlinkRelBuilder, FlinkTypeFactory, FlinkTypeSystem}
+import org.apache.flink.table.calcite._
 import org.apache.flink.table.catalog.{ExternalCatalog, ExternalCatalogSchema}
 import org.apache.flink.table.codegen.{ExpressionReducer, FunctionCodeGenerator, GeneratedFunction}
 import org.apache.flink.table.descriptors.{ConnectorDescriptor, TableDescriptor}
 import org.apache.flink.table.expressions._
 import org.apache.flink.table.functions.utils.UserDefinedFunctionUtils._
 import org.apache.flink.table.functions.{AggregateFunction, ScalarFunction, TableFunction}
+import org.apache.flink.table.operations.OperationTreeBuilder
 import org.apache.flink.table.plan.cost.DataSetCostFactory
 import org.apache.flink.table.plan.logical.{CatalogNode, LogicalRelNode}
 import org.apache.flink.table.plan.nodes.FlinkConventions
@@ -81,7 +82,7 @@ abstract class TableEnvironment(val config: TableConfig) {
   private val rootSchema: SchemaPlus = internalSchema.plus()
 
   // Table API/SQL function catalog
-  private[flink] val functionCatalog: FunctionCatalog = FunctionCatalog.withBuiltIns
+  private[flink] val functionCatalog: FunctionCatalog = new FunctionCatalog()
 
   // the configuration to create a Calcite planner
   private lazy val frameworkConfig: FrameworkConfig = Frameworks
@@ -110,6 +111,12 @@ abstract class TableEnvironment(val config: TableConfig) {
   // registered external catalog names -> catalog
   private val externalCatalogs = new mutable.HashMap[String, ExternalCatalog]
 
+  // temporary bridge between API and planner
+  private[flink] val expressionBridge: ExpressionBridge[PlannerExpression] =
+    new ExpressionBridge[PlannerExpression](functionCatalog, PlannerExpressionConverter.INSTANCE)
+
+  private[flink] val operationTreeBuilder = new OperationTreeBuilder(this)
+
   /** Returns the table config to define the runtime behavior of the Table API. */
   def getConfig: TableConfig = config
 
@@ -132,6 +139,7 @@ abstract class TableEnvironment(val config: TableConfig) {
           .withTrimUnusedFields(false)
           .withConvertTableAccess(false)
           .withInSubQueryThreshold(Integer.MAX_VALUE)
+          .withRelBuilderFactory(FlinkRelBuilderFactory)
           .build()
 
       case Some(c) => c
@@ -440,14 +448,10 @@ abstract class TableEnvironment(val config: TableConfig) {
     // check if class could be instantiated
     checkForInstantiation(function.getClass)
 
-    // register in Table API
-
-    functionCatalog.registerFunction(name, function.getClass)
-
-    // register in SQL API
-    functionCatalog.registerSqlFunction(
-      createScalarSqlFunction(name, name, function, typeFactory)
-    )
+    functionCatalog.registerScalarFunction(
+      name,
+      function,
+      typeFactory)
   }
 
   /**
@@ -467,12 +471,11 @@ abstract class TableEnvironment(val config: TableConfig) {
       implicitly[TypeInformation[T]]
     }
 
-    // register in Table API
-    functionCatalog.registerFunction(name, function.getClass)
-
-    // register in SQL API
-    val sqlFunction = createTableSqlFunction(name, name, function, typeInfo, typeFactory)
-    functionCatalog.registerSqlFunction(sqlFunction)
+    functionCatalog.registerTableFunction(
+      name,
+      function,
+      typeInfo,
+      typeFactory)
   }
 
   /**
@@ -494,19 +497,12 @@ abstract class TableEnvironment(val config: TableConfig) {
       function,
       implicitly[TypeInformation[ACC]])
 
-    // register in Table API
-    functionCatalog.registerFunction(name, function.getClass)
-
-    // register in SQL API
-    val sqlFunctions = createAggregateSqlFunction(
-      name,
+    functionCatalog.registerAggregateFunction(
       name,
       function,
       resultTypeInfo,
       accTypeInfo,
       typeFactory)
-
-    functionCatalog.registerSqlFunction(sqlFunctions)
   }
 
   /**
@@ -519,13 +515,13 @@ abstract class TableEnvironment(val config: TableConfig) {
   def registerTable(name: String, table: Table): Unit = {
 
     // check that table belongs to this table environment
-    if (table.tableEnv != this) {
+    if (table.asInstanceOf[TableImpl].tableEnv != this) {
       throw new TableException(
         "Only tables that belong to this TableEnvironment can be registered.")
     }
 
     checkValidTableName(name)
-    val tableTable = new RelTable(table.getRelNode)
+    val tableTable = new RelTable(table.asInstanceOf[TableImpl].getRelNode)
     registerTableInternal(name, tableTable)
   }
 
@@ -663,7 +659,7 @@ abstract class TableEnvironment(val config: TableConfig) {
       val tableName = tablePath(tablePath.length - 1)
       val table = schema.getTable(tableName)
       if (table != null) {
-        return Some(new Table(this, CatalogNode(tablePath, table.getRowType(typeFactory))))
+        return Some(new TableImpl(this, CatalogNode(tablePath, table.getRowType(typeFactory))))
       }
     }
     None
@@ -746,7 +742,7 @@ abstract class TableEnvironment(val config: TableConfig) {
       val validated = planner.validate(parsed)
       // transform to a relational tree
       val relational = planner.rel(validated)
-      new Table(this, LogicalRelNode(relational.rel))
+      new TableImpl(this, LogicalRelNode(relational.rel))
     } else {
       throw new TableException(
         "Unsupported SQL query! sqlQuery() only accepts SQL queries of type " +
@@ -808,7 +804,7 @@ abstract class TableEnvironment(val config: TableConfig) {
         val validatedQuery = planner.validate(query)
 
         // get query result as Table
-        val queryResult = new Table(this, LogicalRelNode(planner.rel(validatedQuery).rel))
+        val queryResult = new TableImpl(this, LogicalRelNode(planner.rel(validatedQuery).rel))
 
         // get name of sink table
         val targetTableName = insert.getTargetTable.asInstanceOf[SqlIdentifier].names.get(0)
@@ -1097,7 +1093,7 @@ abstract class TableEnvironment(val config: TableConfig) {
 
       case p: PojoTypeInfo[A] =>
         exprs flatMap {
-          case (UnresolvedFieldReference(name: String)) =>
+          case UnresolvedFieldReference(name: String) =>
             referenceByName(name, p).map((_, name))
           case Alias(UnresolvedFieldReference(origName), name: String, _) =>
             referenceByName(origName, p).map((_, name))

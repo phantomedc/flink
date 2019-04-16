@@ -56,7 +56,7 @@ import org.apache.flink.runtime.rpc.RpcService;
 import org.apache.flink.runtime.rpc.RpcUtils;
 import org.apache.flink.runtime.rpc.TestingRpcService;
 import org.apache.flink.runtime.state.CheckpointMetadataOutputStream;
-import org.apache.flink.runtime.state.CheckpointStorage;
+import org.apache.flink.runtime.state.CheckpointStorageCoordinatorView;
 import org.apache.flink.runtime.state.CheckpointStorageLocation;
 import org.apache.flink.runtime.state.CompletedCheckpointStorageLocation;
 import org.apache.flink.runtime.state.StateBackend;
@@ -466,7 +466,7 @@ public class DispatcherTest extends TestLogger {
 	@Nonnull
 	private URI createTestingSavepoint() throws IOException, URISyntaxException {
 		final StateBackend stateBackend = Checkpoints.loadStateBackend(configuration, Thread.currentThread().getContextClassLoader(), log);
-		final CheckpointStorage checkpointStorage = stateBackend.createCheckpointStorage(jobGraph.getJobID());
+		final CheckpointStorageCoordinatorView checkpointStorage = stateBackend.createCheckpointStorage(jobGraph.getJobID());
 		final File savepointFile = temporaryFolder.newFolder();
 		final long checkpointId = 1L;
 
@@ -613,9 +613,9 @@ public class DispatcherTest extends TestLogger {
 
 		assertThat(submissionFuture.isDone(), is(false));
 
-		final CompletableFuture<Collection<String>> metricQueryServicePathsFuture = dispatcherGateway.requestMetricQueryServicePaths(Time.seconds(5L));
+		final CompletableFuture<Collection<String>> metricQueryServiceAddressesFuture = dispatcherGateway.requestMetricQueryServiceAddresses(Time.seconds(5L));
 
-		assertThat(metricQueryServicePathsFuture.get(), is(empty()));
+		assertThat(metricQueryServiceAddressesFuture.get(), is(empty()));
 
 		assertThat(submissionFuture.isDone(), is(false));
 
